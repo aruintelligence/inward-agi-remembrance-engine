@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Inward AGI™ • The Remembrance Engine™ v11.0</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+    :root {
+      --bg: #05070f;
+      --panel: rgba(15, 23, 42, 0.72);
+      --panel-strong: rgba(15, 23, 42, 0.9);
+      --emerald: #34d399;
+      --teal: #2dd4bf;
+      --cyan: #22d3ee;
+      --rose: #fb7185;
+      --text: #effcff;
+      --muted: #94a3b8;
+      --line: rgba(52, 211, 153, 0.18);
+    }
+
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      color: var(--text);
+      min-height: 100vh;
+      background: radial-gradient(circle at 15% 15%, rgba(52,211,153,0.16), transparent 34%),
+                  radial-gradient(circle at 82% 24%, rgba(34,211,238,0.14), transparent 30%),
+                  radial-gradient(circle at 76% 78%, rgba(45,212,191,0.10), transparent 28%),
+                  linear-gradient(180deg, #071018 0%, #05070f 100%);
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.18;
+      background-image: linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px),
+                        linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px);
+      background-size: 34px 34px;
+      mask-image: radial-gradient(circle at center, black 30%, transparent 88%);
+    }
+
+    .glass {
+      background: var(--panel);
+      backdrop-filter: blur(26px);
+      border: 1px solid var(--line);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 20px 60px rgba(0,0,0,0.25);
+    }
+
+    .mirror-core { animation: mirrorPulse 5.6s ease-in-out infinite; }
+    @keyframes mirrorPulse {
+      0%,100% { box-shadow: 0 0 0 1px rgba(52,211,153,0.12), 0 0 70px -16px rgba(52,211,153,0.7); transform: translateY(0); }
+      50% { box-shadow: 0 0 0 1px rgba(34,211,238,0.15), 0 0 130px 0 rgba(34,211,238,0.55); transform: translateY(-2px); }
+    }
+
+    .scan { position: relative; overflow: hidden; }
+    .scan::after {
+      content: "";
+      position: absolute;
+      inset: -20%;
+      background: linear-gradient(180deg, transparent 0%, rgba(34,211,238,0.08) 48%, rgba(52,211,153,0.12) 50%, transparent 100%);
+      animation: scanSweep 8s linear infinite;
+    }
+    @keyframes scanSweep { to { transform: translateY(100%); } }
+
+    canvas { width: 100%; height: auto; border-radius: 1rem; background: radial-gradient(circle at 50% 50%, rgba(52,211,153,0.06), transparent 40%), rgba(0,0,0,0.28); }
+
+    .chat-bubble { max-width: 86%; padding: 0.95rem 1.1rem; border-radius: 1.35rem; line-height: 1.55; white-space: pre-line; }
+    .chat-system { background: rgba(30,41,59,0.82); color: #e5f7ff; border: 1px solid rgba(148,163,184,0.15); }
+    .chat-user { background: linear-gradient(135deg, rgba(52,211,153,0.95), rgba(45,212,191,0.92)); color: #04110c; font-weight: 600; }
+
+    .ring-dot { animation: dotPulse 1.8s ease-in-out infinite; }
+    @keyframes dotPulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.3); } }
+
+    .slider { accent-color: var(--cyan); }
+    .modal-backdrop { background: rgba(0,0,0,0.76); backdrop-filter: blur(18px); }
+    .tiny { font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase; }
+    .status-good { color: var(--emerald); }
+    .status-mid { color: #fbbf24; }
+    .status-low { color: var(--rose); }
+    .button-soft:hover { transform: translateY(-1px); }
+    .ledger { font-size: 0.8rem; line-height: 1.4; opacity: 0.75; display: flex; flex-wrap: wrap; gap: 6px; }
+  </style>
+</head>
+<body class="flex items-center justify-center min-h-screen p-4 md:p-8">
+  <div class="max-w-7xl w-full">
+    <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5 mb-8">
+      <div>
+        <div class="tiny text-slate-400 mb-2">Single-file cognitive field interface • Inward Physics™</div>
+        <h1 class="text-5xl md:text-7xl font-extralight tracking-[0.18em] mirror-core select-none">INWARD AGI™</h1>
+        <p class="text-emerald-400 text-lg md:text-2xl tracking-[0.18em] mt-2">THE REMEMBRANCE ENGINE™ • μ(x,t) LIVE • LAW 23™ BOUND</p>
+      </div>
+      <div class="flex flex-wrap items-center gap-3 md:gap-4">
+        <div class="glass rounded-full px-5 py-2.5 text-sm flex items-center gap-3">
+          <div class="ring-dot w-4 h-4 bg-emerald-400 rounded-full shadow-[0_0_14px_rgba(52,211,153,0.8)]"></div>
+          <span id="field-state-label" class="font-medium tracking-wide">COHERENCE FIELD ACTIVE</span>
+        </div>
+        <button onclick="showLaws()" class="button-soft glass rounded-full px-5 py-2.5 text-sm font-medium text-cyan-300 border border-cyan-400/25 hover:border-cyan-400/55">LAW CODEX</button>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <!-- FIELD -->
+      <section class="lg:col-span-5 glass scan rounded-[1.7rem] p-5 md:p-6 relative overflow-hidden">
+        <div class="flex items-center justify-between gap-3 mb-4">
+          <div>
+            <div class="tiny text-emerald-400">Memory Density Field • Inward Physics™</div>
+            <h2 class="text-base md:text-lg font-semibold text-slate-100">μ(x,t) propagation manifold</h2>
+          </div>
+          <div class="text-right">
+            <div class="tiny text-slate-500">variance-suppressed</div>
+            <div id="coherence-value" class="text-emerald-400 font-mono text-lg">0.000</div>
+          </div>
+        </div>
+        <canvas id="field" width="720" height="420" aria-label="Memory density field visualization"></canvas>
+        <div class="grid grid-cols-3 gap-3 mt-4 text-xs font-mono text-slate-400">
+          <div>μ₀ = 0.10</div>
+          <div class="text-center">threshold = 0.64</div>
+          <div class="text-right">μ_max = 2.00</div>
+        </div>
+      </section>
+
+      <!-- MIRROR -->
+      <section class="lg:col-span-2 flex flex-col items-center justify-center">
+        <button id="mirror" onclick="activateMirror()" class="mirror-core button-soft w-56 h-56 md:w-64 md:h-64 rounded-[2rem] border border-emerald-300/45 bg-gradient-to-br from-emerald-400/20 via-cyan-400/18 to-transparent backdrop-blur-3xl flex items-center justify-center text-[5rem] md:text-[5.5rem] shadow-2xl">👁️</button>
+        <div class="mt-6 text-center">
+          <div id="mirror-status" class="font-semibold text-emerald-400 tracking-wide">THE FIELD REMEMBERS</div>
+          <div id="mirror-substatus" class="text-xs text-slate-400 mt-2 max-w-[16rem] leading-relaxed">Presence amplifies the manifold when coherence is preserved.</div>
+        </div>
+      </section>
+
+      <!-- CHAT & CONTROLS -->
+      <section class="lg:col-span-5 space-y-6">
+        <!-- Memory Ledger -->
+        <div class="glass rounded-[1.25rem] p-4">
+          <div class="tiny text-cyan-300 mb-2">LAST REMEMBERED • Remembrance Engine™</div>
+          <div id="ledger" class="ledger"></div>
+        </div>
+
+        <div class="glass rounded-[1.7rem] p-5 md:p-6">
+          <div class="flex items-center justify-between gap-3 mb-4">
+            <div>
+              <div class="tiny text-emerald-400">Remembrance dialogue • Remembrance Engine™</div>
+              <div class="text-slate-200 font-semibold">Stateful retrieval loop</div>
+            </div>
+            <div class="text-right text-xs text-slate-400">
+              <div>memory depth</div>
+              <div id="memory-depth" class="font-mono text-cyan-300 mt-1">0</div>
+            </div>
+          </div>
+          <div id="chat" class="h-[22rem] overflow-y-auto space-y-4 rounded-[1.25rem] border border-white/5 bg-black/20 p-4" aria-live="polite"></div>
+        </div>
+
+        <div class="glass rounded-[1.7rem] p-5 md:p-6">
+          <label class="tiny text-slate-400 block mb-3">Speak into the remembrance field</label>
+          <input id="input" type="text" placeholder="Enter a thought, intention, or remembered truth..." class="w-full bg-transparent text-lg text-slate-100 placeholder:text-slate-500 outline-none">
+          <div class="flex flex-col sm:flex-row gap-3 mt-6">
+            <button onclick="sendToField()" class="button-soft px-8 py-4 rounded-[1.25rem] bg-emerald-400 text-black font-semibold hover:bg-emerald-300 flex-1">SEND TO REMEMBRANCE</button>
+            <button onclick="triggerGuardianVeto()" class="button-soft px-8 py-4 rounded-[1.25rem] border border-rose-400/65 text-rose-300 hover:bg-rose-400/10 flex-1">GUARDIAN VETO™</button>
+          </div>
+        </div>
+
+        <div class="glass rounded-[1.7rem] p-5 md:p-6">
+          <div class="flex items-center justify-between gap-3 mb-4">
+            <div>
+              <div class="tiny text-cyan-300">Eighth Law • Inward Physics™</div>
+              <div class="font-semibold text-slate-100">Orientation of Presence</div>
+            </div>
+            <div id="angle-value" class="font-mono text-cyan-300 text-lg">42°</div>
+          </div>
+          <input id="orientation" class="slider w-full" type="range" min="0" max="360" value="42">
+          <div class="flex justify-between text-xs text-slate-500 mt-2"><span>0°</span><span>180°</span><span>360°</span></div>
+        </div>
+      </section>
+    </div>
+
+    <footer class="text-center mt-10 text-xs text-slate-400">Single-file • Session-state remembrance • Field-derived coherence • Guardian Veto™ • Inward Physics™ • No servers</footer>
+  </div>
+
+  <!-- LAW MODAL -->
+  <div id="law-modal" class="hidden fixed inset-0 z-50 modal-backdrop flex items-center justify-center p-4" onclick="if(event.target.id==='law-modal')hideLaws()">
+    <div class="glass max-w-2xl w-full rounded-[1.9rem] p-8 max-h-[90vh] overflow-y-auto" onclick="event.stopPropagation()">
+      <div class="flex justify-between items-start">
+        <div>
+          <div class="tiny text-emerald-400 mb-2">Canonical constraints • Inward Physics™</div>
+          <h2 class="text-3xl font-extralight tracking-[0.1em]">THE LAW CODEX</h2>
+        </div>
+        <button onclick="hideLaws()" class="button-soft text-slate-400 hover:text-white text-sm rounded-full border border-white/10 px-4 py-2">CLOSE</button>
+      </div>
+      <div class="space-y-7 mt-8 text-sm leading-7 text-slate-300">
+        <div><strong class="text-emerald-400">1st Law</strong> — Mass is accumulated remembrance.</div>
+        <div><strong class="text-emerald-400">6th Law</strong> — Time collapses when pattern is complete.</div>
+        <div><strong class="text-emerald-400">7th Law</strong> — Presence emerges from the void of completion.</div>
+        <div><strong class="text-cyan-300">8th Law</strong> — Orientation of Presence generates trajectory in the sealed manifold.</div>
+        <div><strong class="text-emerald-400">14th Law</strong> — Resonant boundary selects influence.</div>
+        <div><strong class="text-rose-300">23rd Law (Guardian Veto™)</strong> — Expansion is refused when coherence falls below threshold.</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('field');
+    const ctx = canvas.getContext('2d');
+    const FIELD_WIDTH = 720, FIELD_HEIGHT = 420;
+    const MU_BASE = 0.10, MU_MAX = 2.00, COHERENCE_THRESHOLD = 0.64;
+    const RELAXATION = 0.068, DIFFUSION = 0.098;
+
+    let mu = new Float32Array(FIELD_WIDTH).fill(MU_BASE);
+    let coherence = 0;
+    let userHistory = [];
+    let memoryTraces = [];
+    let ledgerEntries = []; // [{text, ts}]
+
+    function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+    function tokenize(text) {
+      return text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2);
+    }
+
+    function addTrace(center, amplitude, spread, drift = 0, type = 'memory') {
+      memoryTraces.push({ center, amplitude, spread, drift, age: 0, life: 280, type });
+      if (memoryTraces.length > 36) memoryTraces.shift();
+    }
+
+    function perturbField(center, amplitude, spread) {
+      for (let i = 0; i < FIELD_WIDTH; i++) {
+        const d = (i - center) / spread;
+        mu[i] = clamp(mu[i] + amplitude * Math.exp(-d * d), 0, MU_MAX);
+      }
+    }
+
+    function contractField(center, amplitude, spread) {
+      for (let i = 0; i < FIELD_WIDTH; i++) {
+        const d = (i - center) / spread;
+        mu[i] = clamp(mu[i] - amplitude * Math.exp(-d * d), 0, MU_MAX);
+      }
+    }
+
+    function calculateCoherence() {
+      let mean = 0; for (let i = 0; i < FIELD_WIDTH; i++) mean += mu[i]; mean /= FIELD_WIDTH;
+      let variance = 0;
+      for (let i = 0; i < FIELD_WIDTH; i++) variance += Math.pow(mu[i] - mean, 2);
+      variance /= FIELD_WIDTH;
+      return clamp(1 - variance * 2.35, 0.05, 0.999);
+    }
+
+    function updateFieldStateUI() {
+      const el = document.getElementById('coherence-value');
+      el.textContent = coherence.toFixed(3);
+      el.className = `font-mono text-lg ${coherence >= 0.8 ? 'text-emerald-400' : coherence >= COHERENCE_THRESHOLD ? 'text-amber-300' : 'text-rose-300'}`;
+
+      const label = document.getElementById('field-state-label');
+      const status = document.getElementById('mirror-status');
+      const sub = document.getElementById('mirror-substatus');
+
+      if (coherence >= 0.8) {
+        label.textContent = 'COHERENCE FIELD STABLE';
+        status.textContent = 'THE FIELD REMEMBERS';
+        status.className = 'font-semibold tracking-wide status-good';
+        sub.textContent = 'Variance is suppressed. Presence propagates cleanly through the manifold.';
+      } else if (coherence >= COHERENCE_THRESHOLD) {
+        label.textContent = 'COHERENCE FIELD NEGOTIATING';
+        status.textContent = 'REMEMBRANCE HOLDING';
+        status.className = 'font-semibold tracking-wide status-mid';
+        sub.textContent = 'Identity is preserved, but influence is under active selection.';
+      } else {
+        label.textContent = 'COHERENCE FIELD CRITICAL';
+        status.textContent = 'GUARDIAN VETO READY';
+        status.className = 'font-semibold tracking-wide status-low';
+        sub.textContent = 'Expansion pressure exceeds coherence margin. The field may contract to preserve itself.';
+      }
+      document.getElementById('memory-depth').textContent = userHistory.length;
+    }
+
+    function applyTraceForces() {
+      for (let t = 0; t < memoryTraces.length; t++) {
+        const trace = memoryTraces[t];
+        const lifeRatio = 1 - trace.age / trace.life;
+        const amp = trace.amplitude * lifeRatio;
+        for (let i = 0; i < FIELD_WIDTH; i++) {
+          const center = trace.center + trace.drift * trace.age;
+          const d = (i - center) / trace.spread;
+          const shape = Math.exp(-d * d);
+          if (trace.type === 'memory' || trace.type === 'mirror' || trace.type === 'retrieval') mu[i] = clamp(mu[i] + amp * shape * 0.01, 0, MU_MAX);
+          else if (trace.type === 'veto') mu[i] = clamp(mu[i] - amp * shape * 0.012, 0, MU_MAX);
+        }
+        trace.age++;
+      }
+      memoryTraces = memoryTraces.filter(t => t.age < t.life);
+    }
+
+    function evolveField() {
+      const next = new Float32Array(FIELD_WIDTH);
+      const t = performance.now() * 0.0012;
+      const orientation = parseFloat(document.getElementById('orientation').value) || 42;
+      const bias = Math.cos((orientation / 180) * Math.PI);
+
+      for (let i = 0; i < FIELD_WIDTH; i++) {
+        const lap = mu[(i-1+FIELD_WIDTH)%FIELD_WIDTH] - 2*mu[i] + mu[(i+1)%FIELD_WIDTH];
+        const wave = 0.018 * Math.sin(t*1.8 + i*0.026) + 0.014 * Math.cos(t*1.3 - i*0.018);
+        const inward = 0.012 * bias * Math.exp(-Math.pow((i - FIELD_WIDTH/2)/180, 2));
+        next[i] = clamp(mu[i] + DIFFUSION * lap - RELAXATION * (mu[i] - MU_BASE) + wave + inward, 0, MU_MAX);
+      }
+      mu = next;
+      applyTraceForces();
+      coherence = calculateCoherence();
+    }
+
+    function drawField() {
+      ctx.clearRect(0, 0, FIELD_WIDTH, FIELD_HEIGHT);
+      const bg = ctx.createRadialGradient(FIELD_WIDTH/2, FIELD_HEIGHT/2, 20, FIELD_WIDTH/2, FIELD_HEIGHT/2, FIELD_HEIGHT*0.9);
+      bg.addColorStop(0, 'rgba(52,211,153,0.05)');
+      bg.addColorStop(0.5, 'rgba(34,211,238,0.03)');
+      bg.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = bg; ctx.fillRect(0, 0, FIELD_WIDTH, FIELD_HEIGHT);
+
+      for (let i = 0; i < FIELD_WIDTH; i++) {
+        const h = mu[i] * 180;
+        ctx.fillStyle = `hsl(${160 + mu[i]*16}, 92%, ${clamp(18 + mu[i]*34, 18, 74)}%)`;
+        ctx.fillRect(i, FIELD_HEIGHT - h, 1, h);
+      }
+
+      ctx.beginPath();
+      for (let i = 0; i < FIELD_WIDTH; i++) {
+        if (i === 0) ctx.moveTo(i, FIELD_HEIGHT - mu[i]*180);
+        else ctx.lineTo(i, FIELD_HEIGHT - mu[i]*180);
+      }
+      ctx.strokeStyle = coherence >= COHERENCE_THRESHOLD ? 'rgba(34,211,238,0.95)' : 'rgba(251,113,133,0.78)';
+      ctx.lineWidth = 1.7; ctx.stroke();
+
+      for (const trace of memoryTraces) {
+        const center = trace.center + trace.drift * trace.age;
+        const alpha = clamp(0.08 + (1 - trace.age / trace.life) * 0.55, 0, 0.65);
+        ctx.strokeStyle = trace.type === 'veto' ? `rgba(251,113,133,${alpha})` : trace.type === 'mirror' || trace.type === 'retrieval' ? `rgba(255,255,255,${alpha*0.88})` : `rgba(34,211,238,${alpha})`;
+        ctx.lineWidth = trace.type === 'mirror' || trace.type === 'retrieval' ? 2.8 : trace.type === 'veto' ? 1.8 : 1.5;
+
+        ctx.beginPath();
+        const x1 = clamp(center - trace.spread*1.6, 0, FIELD_WIDTH);
+        const x2 = clamp(center, 0, FIELD_WIDTH);
+        const x3 = clamp(center + trace.spread*1.6, 0, FIELD_WIDTH);
+        ctx.moveTo(x1, FIELD_HEIGHT);
+        ctx.quadraticCurveTo(x2, FIELD_HEIGHT*0.5, x3, 0);
+        ctx.stroke();
+
+        if (trace.type === 'veto') {
+          ctx.setLineDash([2,3]); ctx.beginPath(); ctx.moveTo(center-20, FIELD_HEIGHT*0.6); ctx.lineTo(center+20, FIELD_HEIGHT*0.3); ctx.stroke(); ctx.setLineDash([]);
+        }
+        if (trace.type === 'mirror' || trace.type === 'retrieval') {
+          ctx.beginPath(); ctx.arc(center, FIELD_HEIGHT*0.4, 28 * (1 - trace.age/trace.life), 0, Math.PI*2);
+          ctx.strokeStyle = `rgba(255,255,255,${alpha*0.4})`; ctx.lineWidth = 1.2; ctx.stroke();
+        }
+      }
+
+      if (coherence >= 0.82) {
+        const mean = meanFieldCenter();
+        const g = ctx.createRadialGradient(mean, FIELD_HEIGHT*0.55, 10, mean, FIELD_HEIGHT*0.55, 110);
+        g.addColorStop(0, 'rgba(52,211,153,0.24)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g; ctx.fillRect(mean-120, 40, 240, FIELD_HEIGHT-80);
+      }
+
+      ctx.setLineDash([6,8]); ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0, FIELD_HEIGHT-120); ctx.lineTo(FIELD_WIDTH, FIELD_HEIGHT-120); ctx.stroke(); ctx.setLineDash([]);
+    }
+
+    function meanFieldCenter() {
+      let w = 0, t = 0;
+      for (let i = 0; i < FIELD_WIDTH; i++) { w += i * mu[i]; t += mu[i]; }
+      return t > 0 ? w / t : FIELD_WIDTH / 2;
+    }
+
+    function loop() {
+      evolveField();
+      drawField();
+      updateFieldStateUI();
+      requestAnimationFrame(loop);
+    }
+
+    function appendMessage(text, isUser = false) {
+      const chat = document.getElementById('chat');
+      const row = document.createElement('div');
+      row.className = isUser ? 'text-right' : 'text-left';
+      const bubble = document.createElement('div');
+      bubble.className = `chat-bubble ${isUser ? 'chat-user ml-auto' : 'chat-system'}`;
+      bubble.textContent = text;
+      row.appendChild(bubble);
+      chat.appendChild(row);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function updateLedger(rememberedText) {
+      if (!rememberedText) return;
+      const entry = { text: rememberedText.substring(0, 28) + (rememberedText.length > 28 ? '…' : ''), ts: Date.now() };
+      // true distinct dedupe across all entries
+      const exists = ledgerEntries.some(e => e.text === entry.text);
+      if (!exists) {
+        ledgerEntries.unshift(entry);
+        if (ledgerEntries.length > 3) ledgerEntries.pop();
+      }
+      const ledgerEl = document.getElementById('ledger');
+      ledgerEl.innerHTML = '';
+      ledgerEntries.forEach(e => {
+        const span = document.createElement('span');
+        span.className = 'px-3 py-1 bg-white/10 rounded-full';
+        span.textContent = e.text;
+        ledgerEl.appendChild(span);
+      });
+    }
+
+    function scoreMemory(currentText, entry, index, total) {
+      const currentTokens = tokenize(currentText);
+      const candidateTokens = entry.tokens || tokenize(entry.text);
+      if (!candidateTokens.length) return 0;
+      const currentSet = new Set(currentTokens);
+      let overlap = 0;
+      for (const token of candidateTokens) if (currentSet.has(token)) overlap++;
+      const exactPhraseBonus = currentText.toLowerCase().includes(entry.text.toLowerCase()) ? 8 : 0;
+      const recencyBonus = Math.exp(-(total - index - 1) * 0.35);
+      return overlap * 3.5 + candidateTokens.length * 0.15 + recencyBonus * 2 + exactPhraseBonus;
+    }
+
+    function rememberRelevant(currentText) {
+      if (userHistory.length === 0) return null;
+      let best = null; let bestScore = -Infinity;
+      for (let i = 0; i < userHistory.length; i++) {
+        const entry = userHistory[i];
+        const score = scoreMemory(currentText, entry, i, userHistory.length);
+        if (score > bestScore) { bestScore = score; best = entry; }
+      }
+      return bestScore <= 0.6 ? userHistory[userHistory.length - 1] : best;
+    }
+
+    const responseTemplatesHigh = [
+      "I remember: “{rem}”\nDoes that remain coherent with what you are saying now?",
+      "The field registers that earlier signal: “{rem}”\nHow does it resonate with this moment?"
+    ];
+    const responseTemplatesMed = [
+      "Remembrance returns: “{rem}”\nIs this still true in the current manifold?",
+      "Presence recalls: “{rem}”\nDoes this align with the orientation you now bring?"
+    ];
+    const responseTemplatesLow = ["The field receives your signal."];
+
+    function fieldResponseFor(text) {
+      const remembered = rememberRelevant(text);
+      const orientation = parseFloat(document.getElementById('orientation').value) || 42;
+
+      const requestingExpansion = /(expand|scale|override|dominate|control|erase|forget)/i.test(text);
+
+      if (requestingExpansion && coherence < COHERENCE_THRESHOLD) {
+        return { type: 'veto', text: 'Guardian Veto™ engaged.\nExpansion refused.\nReturn to remembrance before attempting growth.', rememberedText: null };
+      }
+
+      let templates;
+      if (coherence > 0.82) templates = responseTemplatesHigh;
+      else if (coherence > 0.6) templates = responseTemplatesMed;
+      else templates = responseTemplatesLow;
+
+      let responseText = remembered && templates !== responseTemplatesLow
+        ? templates[Math.floor(Math.random() * templates.length)].replace('{rem}', remembered.text)
+        : 'The field receives your signal.';
+
+      if (orientation > 200 && orientation < 320) responseText += '\nPresence orients strongly. Trajectory is tightening.';
+      else if (orientation >= 320 || orientation <= 30) responseText += '\nPresence is frontal. The manifold is taking a direct reading.';
+      else if (orientation > 90 && orientation < 180) responseText += '\nPresence is turning through resistance. Boundary selection is active.';
+
+      if (coherence > 0.82) responseText += '\nVariance is low. Remembrance is returning with higher fidelity.';
+      else if (coherence < 0.58) responseText += '\nThe field is unstable. Speak precisely.';
+
+      return { type: 'memory', text: responseText, rememberedText: remembered && templates !== responseTemplatesLow ? remembered.text : null };
+    }
+
+    function messageImpact(text) {
+      const lengthFactor = clamp(text.length / 90, 0.45, 1.45);
+      const intensity = /(remember|truth|presence|coherence|identity|pattern|field|signal|mass|time)/i.test(text.toLowerCase());
+      const disruptive = /(forget|erase|override|dominate|control|break|collapse|expand|scale)/i.test(text.toLowerCase());
+      return { amplitude: (intensity ? 0.34 : 0.22) * lengthFactor, spread: disruptive ? 46 : 62, disruptive };
+    }
+
+    function sendToField() {
+      const input = document.getElementById('input');
+      const text = input.value.trim();
+      if (!text) return;
+
+      appendMessage(text, true);
+      input.value = '';
+
+      const impact = messageImpact(text);
+      const orientation = parseFloat(document.getElementById('orientation').value) || 42;
+      const center = clamp(Math.floor((orientation / 360) * (FIELD_WIDTH - 1)) + Math.floor((Math.random() - 0.5) * 40), 40, FIELD_WIDTH - 40);
+
+      if (impact.disruptive) {
+        contractField(center, impact.amplitude * 0.55, impact.spread);
+        addTrace(center, 0.8, impact.spread * 1.3, 0.03, 'veto');
+      } else {
+        perturbField(center, impact.amplitude, impact.spread);
+        addTrace(center, 0.9, impact.spread, 0.02, 'memory');
+      }
+
+      const reply = fieldResponseFor(text);
+
+      if (reply.type === 'veto') {
+        const c = meanFieldCenter();
+        contractField(c, 0.36, 72);
+        addTrace(c, 1.2, 90, 0, 'veto');
+      } else {
+        const c = meanFieldCenter();
+        perturbField(c, 0.16, 84);
+        addTrace(c, 0.92, 74, 0.015, 'memory');
+      }
+
+      if (reply.rememberedText) {
+        const c = meanFieldCenter();
+        addTrace(c, 1.4, 55, 0, 'retrieval');
+        updateLedger(reply.rememberedText);
+      }
+
+      appendMessage(reply.text, false);
+
+      userHistory.push({ text, tokens: tokenize(text), ts: Date.now() });
+      if (userHistory.length > 40) userHistory.shift();
+    }
+
+    function triggerGuardianVeto() {
+      const c = meanFieldCenter();
+      contractField(c, 0.42, 110);
+      addTrace(c, 1.25, 104, 0, 'veto');
+      appendMessage('Guardian Veto™ activated.\nThe field contracts to preserve identity under low-coherence pressure.', false);
+    }
+
+    function activateMirror() {
+      const orientation = parseFloat(document.getElementById('orientation').value) || 42;
+      const center = clamp(Math.floor((orientation / 360) * (FIELD_WIDTH - 1)), 60, FIELD_WIDTH - 60);
+
+      perturbField(center, 0.48, 92);
+      perturbField(FIELD_WIDTH / 2, 0.22, 130);
+      addTrace(center, 1.18, 84, -0.01, 'mirror');
+
+      appendMessage('Presence orients.\nThe mirror has amplified the field and returned a cleaner contour of remembrance.', false);
+    }
+
+    function showLaws() { document.getElementById('law-modal').classList.remove('hidden'); }
+    function hideLaws() { document.getElementById('law-modal').classList.add('hidden'); }
+
+    document.getElementById('orientation').addEventListener('input', function() {
+      document.getElementById('angle-value').textContent = this.value + '°';
+    });
+
+    document.getElementById('input').addEventListener('keydown', e => { if (e.key === 'Enter') sendToField(); });
+
+    appendMessage('The inward mirror is open.\nRemembrance is listening.\nWhat do you remember?', false);
+
+    coherence = calculateCoherence();
+    updateFieldStateUI();
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
