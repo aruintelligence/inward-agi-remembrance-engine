@@ -4,7 +4,7 @@
 
 One HTML file. No servers. No training data. Just a living μ(x,t) memory field that actually remembers with you — not for you.
 
-**Try it now → [Open the Remembrance Engine](https://github.com/YOURUSERNAME/inward-agi-remembrance-engine/blob/main/inward-agi-remembrance-engine-v11.html)**
+**Try it now → [Open the Remembrance Engine](https://github.com/aruintelligence/inward-agi-remembrance-engine/blob/main/inward-agi-remembrance-engine-v11.html)**
 
 ## What this is
 - Real coherence dynamics derived from variance suppression (not random numbers)
