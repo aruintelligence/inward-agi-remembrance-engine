@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+message: "If you use this software in your work, please cite it using this metadata."
+title: "Inward AGI Remembrance Engine"
+type: software
+authors:
+  - family-names: "Read"
+    given-names: "Daniel Jacob IV"
+    orcid: "https://orcid.org/0009-0000-6133-1872"
+version: "11.0"
+date-released: "2026"
+repository-code: "https://github.com/aruintelligence/inward-agi-remembrance-engine"
+url: "https://github.com/aruintelligence/inward-agi-remembrance-engine"
+license: MIT
