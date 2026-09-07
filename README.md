@@ -2,6 +2,7 @@
 
 **A single-file, browser-native symbolic remembrance instrument.**
 
+[![Release](https://img.shields.io/github/v/release/aruintelligence/inward-agi-remembrance-engine?style=for-the-badge)](https://github.com/aruintelligence/inward-agi-remembrance-engine/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-16a34a?style=for-the-badge)](LICENSE)
 [![Research status](https://img.shields.io/badge/Status-Experimental-f59e0b?style=for-the-badge)](#research-scope)
 [![No backend](https://img.shields.io/badge/Runtime-Client--side-0ea5e9?style=for-the-badge)](#implementation)
