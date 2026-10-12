@@ -101,7 +101,7 @@
       <div class="flex flex-wrap items-center gap-3 md:gap-4">
         <div class="glass rounded-full px-5 py-2.5 text-sm flex items-center gap-3">
           <div class="ring-dot w-4 h-4 bg-emerald-400 rounded-full shadow-[0_0_14px_rgba(52,211,153,0.8)]"></div>
-          <span id="field-state-label" class="font-medium tracking-wide">COHERENCE FIELD ACTIVE</span>
+          <span id="field-state-label" class="font-medium tracking-wide">MODEL BASELINE</span>
         </div>
         <button onclick="showLaws()" class="button-soft glass rounded-full px-5 py-2.5 text-sm font-medium text-cyan-300 border border-cyan-400/25 hover:border-cyan-400/55">LAW CODEX</button>
       </div>
@@ -132,8 +132,8 @@
       <section class="lg:col-span-2 flex flex-col items-center justify-center">
         <button id="mirror" onclick="activateMirror()" class="mirror-core button-soft w-56 h-56 md:w-64 md:h-64 rounded-[2rem] border border-emerald-300/45 bg-gradient-to-br from-emerald-400/20 via-cyan-400/18 to-transparent backdrop-blur-3xl flex items-center justify-center text-[5rem] md:text-[5.5rem] shadow-2xl">👁️</button>
         <div class="mt-6 text-center">
-          <div id="mirror-status" class="font-semibold text-emerald-400 tracking-wide">THE FIELD REMEMBERS</div>
-          <div id="mirror-substatus" class="text-xs text-slate-400 mt-2 max-w-[16rem] leading-relaxed">Presence amplifies the manifold when coherence is preserved.</div>
+          <div id="mirror-status" class="font-semibold text-emerald-400 tracking-wide">NO MEMORY YET</div>
+          <div id="mirror-substatus" class="text-xs text-slate-400 mt-2 max-w-[16rem] leading-relaxed">No entries have been stored; this score only describes simulated field variance.</div>
         </div>
       </section>
 
@@ -143,6 +143,15 @@
         <div class="glass rounded-[1.25rem] p-4">
           <div class="tiny text-cyan-300 mb-2">LAST REMEMBERED • Remembrance Engine™</div>
           <div id="ledger" class="ledger"></div>
+        </div>
+
+        <div class="glass rounded-[1.25rem] p-4 text-sm">
+          <div class="tiny text-cyan-300 mb-2">Browser-local state</div>
+          <p id="storage-status" class="text-slate-300 mb-3" role="status">Entries and the field snapshot are saved in this browser. Export includes your entered text.</p>
+          <div class="flex flex-wrap gap-2">
+            <button type="button" onclick="exportState()" class="rounded-xl border border-cyan-400/50 px-4 py-2 text-cyan-200">Download JSON</button>
+            <button type="button" onclick="eraseState()" class="rounded-xl border border-rose-400/50 px-4 py-2 text-rose-200">Erase local state</button>
+          </div>
         </div>
 
         <div class="glass rounded-[1.7rem] p-5 md:p-6">
@@ -160,8 +169,8 @@
         </div>
 
         <div class="glass rounded-[1.7rem] p-5 md:p-6">
-          <label class="tiny text-slate-400 block mb-3">Speak into the remembrance field</label>
-          <input id="input" type="text" placeholder="Enter a thought, intention, or remembered truth..." class="w-full bg-transparent text-lg text-slate-100 placeholder:text-slate-500 outline-none">
+          <label for="input" class="tiny text-slate-400 block mb-3">Speak into the remembrance field</label>
+          <input id="input" type="text" maxlength="2000" placeholder="Enter a thought, intention, or remembered truth..." class="w-full bg-transparent text-lg text-slate-100 placeholder:text-slate-500 outline-none">
           <div class="flex flex-col sm:flex-row gap-3 mt-6">
             <button onclick="sendToField()" class="button-soft px-8 py-4 rounded-[1.25rem] bg-emerald-400 text-black font-semibold hover:bg-emerald-300 flex-1">SEND TO REMEMBRANCE</button>
             <button onclick="triggerGuardianVeto()" class="button-soft px-8 py-4 rounded-[1.25rem] border border-rose-400/65 text-rose-300 hover:bg-rose-400/10 flex-1">GUARDIAN VETO™</button>
@@ -182,7 +191,7 @@
       </section>
     </div>
 
-    <footer class="text-center mt-10 text-xs text-slate-400">Single-file • Session-state remembrance • Field-derived coherence • Guardian Veto™ • Inward Physics™ • No servers</footer>
+    <footer class="text-center mt-10 text-xs text-slate-400">Single-file • Browser-local remembrance • Modeled coherence • Guardian Veto™ • Inward Physics™ • No app server</footer>
   </div>
 
   <!-- LAW MODAL -->
@@ -212,17 +221,94 @@
     const FIELD_WIDTH = 720, FIELD_HEIGHT = 420;
     const MU_BASE = 0.10, MU_MAX = 2.00, COHERENCE_THRESHOLD = 0.64;
     const RELAXATION = 0.068, DIFFUSION = 0.098;
+    const STORAGE_KEY = 'aru_remembrance_engine_v11_state';
 
     let mu = new Float32Array(FIELD_WIDTH).fill(MU_BASE);
     let coherence = 0;
     let userHistory = [];
     let memoryTraces = [];
     let ledgerEntries = []; // [{text, ts}]
+    let storageAvailable = true;
 
     function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
 
     function tokenize(text) {
       return text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2);
+    }
+
+    function showStorageStatus() {
+      document.getElementById('storage-status').textContent = storageAvailable
+        ? 'Entries and the latest interaction snapshot are stored in this browser. Downloaded JSON includes your entered text; this app does not upload it.'
+        : 'Browser storage is unavailable. This session works, but entries will not survive a reload. You can still download a JSON copy.';
+    }
+
+    function stateSnapshot() {
+      return {
+        schema_version: 1,
+        scope: 'browser-local symbolic simulation',
+        saved_at: new Date().toISOString(),
+        user_history: userHistory.map(({text, ts}) => ({text, ts})),
+        ledger_entries: ledgerEntries,
+        field: Array.from(mu)
+      };
+    }
+
+    function saveState() {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(stateSnapshot()));
+        storageAvailable = true;
+      } catch (_) {
+        storageAvailable = false;
+      }
+      showStorageStatus();
+    }
+
+    function loadState() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) { showStorageStatus(); return; }
+        const state = JSON.parse(raw);
+        if (!state || state.schema_version !== 1) { showStorageStatus(); return; }
+        if (Array.isArray(state.user_history)) {
+          userHistory = state.user_history
+            .filter(entry => entry && typeof entry.text === 'string')
+            .slice(-40)
+            .map(entry => {
+              const text = entry.text.slice(0, 2000);
+              return {text, tokens: tokenize(text), ts: Number.isFinite(entry.ts) ? entry.ts : Date.now()};
+            });
+        }
+        if (Array.isArray(state.ledger_entries)) {
+          ledgerEntries = state.ledger_entries
+            .filter(entry => entry && typeof entry.text === 'string')
+            .slice(0, 3)
+            .map(entry => ({text: entry.text.slice(0, 29), ts: Number.isFinite(entry.ts) ? entry.ts : Date.now()}));
+        }
+        if (Array.isArray(state.field) && state.field.length === FIELD_WIDTH) {
+          mu = Float32Array.from(state.field, value => Number.isFinite(value) ? clamp(value, 0, MU_MAX) : MU_BASE);
+        }
+      } catch (_) {
+        // A blocked storage API or a damaged snapshot must not stop the simulation.
+        try { localStorage.getItem(STORAGE_KEY); } catch (_) { storageAvailable = false; }
+      }
+      showStorageStatus();
+    }
+
+    function exportState() {
+      const url = URL.createObjectURL(new Blob([JSON.stringify(stateSnapshot(), null, 2)], {type: 'application/json'}));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'inward-remembrance-state.json';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    function eraseState() {
+      if (!window.confirm('Erase the Remembrance Engine memory and field snapshot from this browser?')) return;
+      try { localStorage.removeItem(STORAGE_KEY); } catch (_) { /* Storage may be disabled. */ }
+      window.location.reload();
     }
 
     function addTrace(center, amplitude, spread, drift = 0, type = 'memory') {
@@ -261,7 +347,12 @@
       const status = document.getElementById('mirror-status');
       const sub = document.getElementById('mirror-substatus');
 
-      if (coherence >= 0.8) {
+      if (userHistory.length === 0) {
+        label.textContent = 'MODEL BASELINE';
+        status.textContent = 'NO MEMORY YET';
+        status.className = 'font-semibold tracking-wide status-mid';
+        sub.textContent = 'No entries have been stored; this score only describes simulated field variance.';
+      } else if (coherence >= 0.8) {
         label.textContent = 'COHERENCE FIELD STABLE';
         status.textContent = 'THE FIELD REMEMBERS';
         status.className = 'font-semibold tracking-wide status-good';
@@ -395,23 +486,25 @@
       chat.scrollTop = chat.scrollHeight;
     }
 
-    function updateLedger(rememberedText) {
-      if (!rememberedText) return;
-      const entry = { text: rememberedText.substring(0, 28) + (rememberedText.length > 28 ? '…' : ''), ts: Date.now() };
-      // true distinct dedupe across all entries
-      const exists = ledgerEntries.some(e => e.text === entry.text);
-      if (!exists) {
-        ledgerEntries.unshift(entry);
-        if (ledgerEntries.length > 3) ledgerEntries.pop();
-      }
+    function renderLedger() {
       const ledgerEl = document.getElementById('ledger');
-      ledgerEl.innerHTML = '';
+      ledgerEl.replaceChildren();
       ledgerEntries.forEach(e => {
         const span = document.createElement('span');
         span.className = 'px-3 py-1 bg-white/10 rounded-full';
         span.textContent = e.text;
         ledgerEl.appendChild(span);
       });
+    }
+
+    function updateLedger(rememberedText) {
+      if (!rememberedText) return;
+      const entry = { text: rememberedText.substring(0, 28) + (rememberedText.length > 28 ? '…' : ''), ts: Date.now() };
+      if (!ledgerEntries.some(e => e.text === entry.text)) {
+        ledgerEntries.unshift(entry);
+        if (ledgerEntries.length > 3) ledgerEntries.pop();
+      }
+      renderLedger();
     }
 
     function scoreMemory(currentText, entry, index, total) {
@@ -485,7 +578,7 @@
 
     function sendToField() {
       const input = document.getElementById('input');
-      const text = input.value.trim();
+      const text = input.value.trim().slice(0, 2000);
       if (!text) return;
 
       appendMessage(text, true);
@@ -503,6 +596,9 @@
         addTrace(center, 0.9, impact.spread, 0.02, 'memory');
       }
 
+      // Gate the response on the field after this input's perturbation, not
+      // on the value from the previous animation frame.
+      coherence = calculateCoherence();
       const reply = fieldResponseFor(text);
 
       if (reply.type === 'veto') {
@@ -525,6 +621,9 @@
 
       userHistory.push({ text, tokens: tokenize(text), ts: Date.now() });
       if (userHistory.length > 40) userHistory.shift();
+      coherence = calculateCoherence();
+      updateFieldStateUI();
+      saveState();
     }
 
     function triggerGuardianVeto() {
@@ -532,6 +631,9 @@
       contractField(c, 0.42, 110);
       addTrace(c, 1.25, 104, 0, 'veto');
       appendMessage('Guardian Veto™ activated.\nThe field contracts to preserve identity under low-coherence pressure.', false);
+      coherence = calculateCoherence();
+      updateFieldStateUI();
+      saveState();
     }
 
     function activateMirror() {
@@ -543,6 +645,9 @@
       addTrace(center, 1.18, 84, -0.01, 'mirror');
 
       appendMessage('Presence orients.\nThe mirror has amplified the field and returned a cleaner contour of remembrance.', false);
+      coherence = calculateCoherence();
+      updateFieldStateUI();
+      saveState();
     }
 
     function showLaws() { document.getElementById('law-modal').classList.remove('hidden'); }
@@ -554,7 +659,11 @@
 
     document.getElementById('input').addEventListener('keydown', e => { if (e.key === 'Enter') sendToField(); });
 
-    appendMessage('The inward mirror is open.\nRemembrance is listening.\nWhat do you remember?', false);
+    loadState();
+    renderLedger();
+    appendMessage(userHistory.length
+      ? `Restored ${userHistory.length} browser-local remembrance entries.\nWhat would you like to revisit?`
+      : 'The inward mirror is open.\nRemembrance is listening.\nWhat do you remember?', false);
 
     coherence = calculateCoherence();
     updateFieldStateUI();
