@@ -19,13 +19,14 @@ It explores a memory-first design question:
 
 ## Implemented behavior
 
-- Browser-local remembrance events
+- Browser-local remembrance events that survive reload when storage is available
 - A deduplicated memory ledger
 - Visual traces for input, retrieval, and veto states
 - A stochastic reaction-diffusion-style field with saturation
 - A modeled coherence value derived from internal field state
 - Threshold-based contraction called Guardian Veto™
 - Client-side operation with no application backend
+- JSON export and local erasure controls for saved entries and the field snapshot
 
 These are implemented software behaviors inside the prototype. They are not validated measures of a user’s cognition, wellbeing, spirituality, or identity.
 
@@ -42,6 +43,22 @@ open inward-agi-remembrance-engine-v11.html
 ```
 
 On Windows, double-click the HTML file. Some externally hosted visual dependencies may require a network connection on first load.
+
+## Saved state and inspection
+
+Each interaction saves up to 40 entered remembrance events, the three visible retrieval-ledger labels, and a 720-value field snapshot to this browser's `localStorage`. On reload, the memory and snapshot are restored before the simulation resumes. The chat transcript and animation frames are not saved. If browser storage is blocked or unavailable, the session still works and a JSON copy can still be downloaded. File URL storage behavior varies by browser.
+
+Use **Download JSON** to inspect a snapshot, including your entered text. **Erase local state** removes only this app's saved key after confirmation. The app does not upload entered text; the Tailwind CDN and Google Fonts are external visual dependencies, and browser extensions or other device users may affect local privacy. The export is for inspection; importing it is not implemented.
+
+The modeled coherence score starts near 0.999 on a flat, empty field because it is calculated from low spatial variance. That initial value is not earned by memory or evidence of cognition. A submitted input changes the field before the threshold response rule evaluates the new score.
+
+Run the local regression suite with Node.js:
+
+```bash
+node tests/state.test.cjs
+```
+
+It covers reload and retrieval, the initial empty-state label, response gating, damaged or blocked storage, export, and erasure.
 
 ## Conceptual vocabulary
 
@@ -62,7 +79,6 @@ The prototype draws on the Inward Physics™ research program:
 
 ## Known limitations
 
-- No automated test suite is currently included
 - Browser behavior and storage limits vary
 - The dynamics are defined by the implementation rather than independently validated
 - The interface should not be used for consequential medical, psychological, legal, financial, or spiritual decisions
