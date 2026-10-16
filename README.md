@@ -54,7 +54,7 @@ Use **Download JSON** to inspect a snapshot, including your entered text. **Eras
 
 The modeled coherence score starts near 0.999 on a flat, empty field because it is calculated from low spatial variance. That initial value is not earned by memory or evidence of cognition. A submitted input changes the field before the threshold response rule evaluates the new score.
 
-Run the local regression suite with Node.js:
+Run the local regression suite with Node.js and Python 3 available:
 
 ```bash
 node tests/state.test.cjs
