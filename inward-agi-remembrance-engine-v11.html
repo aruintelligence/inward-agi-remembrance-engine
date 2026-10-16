@@ -146,6 +146,16 @@
         </div>
 
         <div class="glass rounded-[1.25rem] p-4 text-sm">
+          <label for="retrieval-query" class="tiny text-cyan-300 block mb-2">Recall evidence lab</label>
+          <p class="text-slate-400 mb-3">Try a question against saved entries. This inspection does not add a memory or change the field. Matches are word overlap, not proof that a statement is true.</p>
+          <div class="flex flex-col sm:flex-row gap-2">
+            <input id="retrieval-query" type="text" maxlength="2000" placeholder="What did I say about Portland?" class="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/20 px-4 py-2 text-slate-100 placeholder:text-slate-500" aria-label="Question to inspect">
+            <button type="button" onclick="inspectQuery()" class="rounded-xl border border-cyan-400/50 px-4 py-2 text-cyan-200">Inspect recall</button>
+          </div>
+          <div id="retrieval-audit" class="mt-3 text-slate-300 leading-relaxed" role="status" aria-live="polite">No query inspected yet.</div>
+        </div>
+
+        <div class="glass rounded-[1.25rem] p-4 text-sm">
           <div class="tiny text-cyan-300 mb-2">Browser-local state</div>
           <p id="storage-status" class="text-slate-300 mb-3" role="status">Entries and the field snapshot are saved in this browser. Export includes your entered text.</p>
           <div class="flex flex-wrap gap-2">
@@ -232,8 +242,12 @@
 
     function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
 
+    // Fixed, public lexical rule. Neither recency nor the simulated field can
+    // turn an unsupported entry into a cited memory.
+    const RETRIEVAL_STOP_WORDS = new Set('a an and are as at be by do did for from how i in is it me my of on or our say said the this to was we were what when where who why with you your remember memory field please tell about'.split(' '));
     function tokenize(text) {
-      return text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2);
+      return (text.normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu) || [])
+        .filter(word => [...word].length >= 2 && !RETRIEVAL_STOP_WORDS.has(word));
     }
 
     function showStorageStatus() {
@@ -507,27 +521,52 @@
       renderLedger();
     }
 
-    function scoreMemory(currentText, entry, index, total) {
-      const currentTokens = tokenize(currentText);
-      const candidateTokens = entry.tokens || tokenize(entry.text);
-      if (!candidateTokens.length) return 0;
-      const currentSet = new Set(currentTokens);
-      let overlap = 0;
-      for (const token of candidateTokens) if (currentSet.has(token)) overlap++;
-      const exactPhraseBonus = currentText.toLowerCase().includes(entry.text.toLowerCase()) ? 8 : 0;
-      const recencyBonus = Math.exp(-(total - index - 1) * 0.35);
-      return overlap * 3.5 + candidateTokens.length * 0.15 + recencyBonus * 2 + exactPhraseBonus;
+    function inspectRetrieval(query) {
+      const terms = [...new Set(tokenize(query))];
+      const result = { status: 'no-evidence', candidateCount: userHistory.length, supportedCount: 0, selected: null, matches: [], score: null, ambiguityCount: 0 };
+      if (!userHistory.length) { result.status = 'no-memory'; return result; }
+      if (!terms.length) return result;
+
+      const candidates = userHistory.map((entry, index) => {
+        const candidateTerms = new Set(tokenize(entry.text));
+        const matches = terms.filter(term => candidateTerms.has(term));
+        return { entry, index, matches, score: matches.length ? 4 * matches.length + matches.length / candidateTerms.size : 0 };
+      }).filter(candidate => candidate.matches.length);
+      result.supportedCount = candidates.length;
+      if (!candidates.length) return result;
+
+      candidates.sort((a, b) => b.score - a.score || b.index - a.index);
+      const top = candidates[0];
+      const tied = candidates.filter(candidate => Math.abs(candidate.score - top.score) < 1e-9);
+      result.score = top.score;
+      result.matches = top.matches;
+      result.ambiguityCount = tied.length;
+      if (tied.some(candidate => candidate.entry.text !== top.entry.text)) {
+        result.status = 'ambiguous';
+      } else {
+        result.status = 'supported';
+        result.selected = { index: top.index, text: top.entry.text };
+      }
+      return result;
     }
 
-    function rememberRelevant(currentText) {
-      if (userHistory.length === 0) return null;
-      let best = null; let bestScore = -Infinity;
-      for (let i = 0; i < userHistory.length; i++) {
-        const entry = userHistory[i];
-        const score = scoreMemory(currentText, entry, i, userHistory.length);
-        if (score > bestScore) { bestScore = score; best = entry; }
-      }
-      return bestScore <= 0.6 ? userHistory[userHistory.length - 1] : best;
+    function rememberRelevant(query) {
+      const audit = inspectRetrieval(query);
+      return audit.selected && userHistory[audit.selected.index];
+    }
+
+    function renderRetrievalAudit(audit, vetoed = false) {
+      const panel = document.getElementById('retrieval-audit');
+      if (audit.status === 'no-memory') panel.textContent = 'No earlier entries to inspect.';
+      else if (audit.status === 'no-evidence') panel.textContent = `No recall: no shared substantive words across ${audit.candidateCount} earlier entries.`;
+      else if (audit.status === 'ambiguous') panel.textContent = `Recall withheld: ${audit.ambiguityCount} different entries have equal top lexical support. Matched words: ${audit.matches.join(', ')}. Refine the question.`;
+      else panel.textContent = `Lexical match ${audit.selected.index + 1}/${audit.candidateCount}: “${audit.selected.text}” Matched words: ${audit.matches.join(', ')}. ${audit.supportedCount} supported candidate(s).${vetoed ? ' Response vetoed; nothing cited.' : ''}`;
+    }
+
+    function inspectQuery() {
+      const query = document.getElementById('retrieval-query').value.trim().slice(0, 2000);
+      if (!query) { document.getElementById('retrieval-audit').textContent = 'Enter a question to inspect.'; return; }
+      renderRetrievalAudit(inspectRetrieval(query));
     }
 
     const responseTemplatesHigh = [
@@ -540,8 +579,8 @@
     ];
     const responseTemplatesLow = ["The field receives your signal."];
 
-    function fieldResponseFor(text) {
-      const remembered = rememberRelevant(text);
+    function fieldResponseFor(text, audit = inspectRetrieval(text)) {
+      const remembered = audit.selected && userHistory[audit.selected.index];
       const orientation = parseFloat(document.getElementById('orientation').value) || 42;
 
       const requestingExpansion = /(expand|scale|override|dominate|control|erase|forget)/i.test(text);
@@ -599,7 +638,9 @@
       // Gate the response on the field after this input's perturbation, not
       // on the value from the previous animation frame.
       coherence = calculateCoherence();
-      const reply = fieldResponseFor(text);
+      const audit = inspectRetrieval(text);
+      const reply = fieldResponseFor(text, audit);
+      renderRetrievalAudit(audit, reply.type === 'veto');
 
       if (reply.type === 'veto') {
         const c = meanFieldCenter();

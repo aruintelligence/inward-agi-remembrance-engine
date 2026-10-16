@@ -21,6 +21,8 @@ It explores a memory-first design question:
 
 - Browser-local remembrance events that survive reload when storage is available
 - A deduplicated memory ledger
+- An evidence-aware lexical recall rule that abstains on unrelated or equally supported memories
+- A local Recall evidence lab that shows matching words without saving inspection queries
 - Visual traces for input, retrieval, and veto states
 - A stochastic reaction-diffusion-style field with saturation
 - A modeled coherence value derived from internal field state
@@ -58,7 +60,7 @@ Run the local regression suite with Node.js:
 node tests/state.test.cjs
 ```
 
-It covers reload and retrieval, the initial empty-state label, response gating, damaged or blocked storage, export, and erasure.
+It covers reload and retrieval, unsupported and ambiguous recall, independent Python verification, the initial empty-state label, response gating, damaged or blocked storage, export, and erasure. [The retrieval protocol](RETRIEVAL_PROTOCOL.md) states the exact rule and shows how to recheck an exported state without importing browser code.
 
 ## Conceptual vocabulary
 
@@ -81,6 +83,7 @@ The prototype draws on the Inward Physics™ research program:
 
 - Browser behavior and storage limits vary
 - The dynamics are defined by the implementation rather than independently validated
+- Retrieval uses exact normalized word overlap. It can miss paraphrases and should not be interpreted as evidence that a recalled statement is true
 - The interface should not be used for consequential medical, psychological, legal, financial, or spiritual decisions
 - The repository does not establish comparative “first” claims about the broader AI field
 
