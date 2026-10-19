@@ -45,7 +45,10 @@ function boot(saved = new Map(), storageBlocked = false, storageWriteBlocked = f
   };
   const window = {
     confirm() { return true; },
-    location: { reload() { window.reloaded = true; } }
+    location: { reload() { window.reloaded = true; } },
+    listeners: new Map(),
+    addEventListener(type, listener) { window.listeners.set(type, listener); },
+    fireStorage(event) { window.listeners.get('storage')?.(event); }
   };
   const context = vm.createContext({
     document, localStorage, window, Blob, console, crypto: webcrypto,
@@ -63,6 +66,19 @@ function boot(saved = new Map(), storageBlocked = false, storageWriteBlocked = f
       vm.runInContext('sendToField()', context);
     }
   };
+}
+
+const vaultPassword = 'unique browser vault passphrase 2026';
+
+async function enableVault(app, passphrase = vaultPassword) {
+  app.context.document.getElementById('vault-passphrase').value = passphrase;
+  app.context.document.getElementById('vault-confirm').value = passphrase;
+  return app.read('enableVault()');
+}
+
+async function unlockVault(app, passphrase = vaultPassword) {
+  app.context.document.getElementById('vault-unlock-passphrase').value = passphrase;
+  return app.read('unlockVault()');
 }
 
 test('entries, retrieval ledger, and field snapshot survive reload', () => {
@@ -249,6 +265,246 @@ test('missing Web Crypto refuses encrypted download without a plaintext fallback
   assert.equal(app.exports.length, 0);
   assert.match(app.elements.get('crypto-status').textContent, /secure browser context/);
   assert.equal(app.elements.get('export-passphrase').value, '');
+});
+
+test('opt-in vault migrates an existing memory, seals later saves, and unlocks after reload', async () => {
+  const saved = new Map();
+  const app = boot(saved);
+  app.send('Private vault memory one');
+  const previous = saved.get(key);
+  assert.match(previous, /Private vault memory one/);
+  assert.equal(await enableVault(app), true);
+  assert.equal(app.elements.get('vault-passphrase').value, '');
+  assert.equal(app.elements.get('vault-confirm').value, '');
+  assert.equal(app.elements.get('vault-setup').hidden, true);
+  const first = JSON.parse(saved.get(key));
+  assert.equal(first.format, 'aru-remembrance-vault-v1');
+  assert.doesNotMatch(saved.get(key), /Private vault memory one/);
+
+  app.send('Private vault memory two');
+  await app.read('vaultWriteQueue');
+  const second = JSON.parse(saved.get(key));
+  assert.notEqual(second.iv, first.iv);
+  assert.equal(second.salt, first.salt);
+  assert.doesNotMatch(saved.get(key), /Private vault memory/);
+
+  const independentKey = pbkdf2Sync(vaultPassword, Buffer.from(second.salt, 'base64'), second.iterations, 32, 'sha256');
+  const sealed = Buffer.from(second.ciphertext, 'base64');
+  const decipher = createDecipheriv('aes-256-gcm', independentKey, Buffer.from(second.iv, 'base64'));
+  decipher.setAAD(Buffer.from(second.format));
+  decipher.setAuthTag(sealed.subarray(-16));
+  const plaintext = Buffer.concat([decipher.update(sealed.subarray(0, -16)), decipher.final()]);
+  assert.deepEqual(JSON.parse(plaintext.toString()).user_history.map(e => e.text),
+    ['Private vault memory one', 'Private vault memory two']);
+
+  app.context.document.getElementById('retrieval-audit').textContent = 'Private vault memory one';
+  app.context.document.getElementById('import-summary').textContent = 'Private vault memory two';
+  assert.equal(await app.read('lockVault()'), true);
+  assert.equal(app.read('vaultLocked'), true);
+  assert.equal(app.read('userHistory.length'), 0);
+  assert.doesNotMatch(app.elements.get('retrieval-audit').textContent, /Private vault memory/);
+  assert.equal(app.elements.get('import-summary').textContent, '');
+  app.read('exportState()');
+  assert.equal(app.exports.length, 0);
+
+  const reloaded = boot(saved);
+  assert.equal(reloaded.read('vaultLocked'), true);
+  assert.equal(reloaded.read('userHistory.length'), 0);
+  assert.equal(reloaded.elements.get('vault-lock').hidden, false);
+  reloaded.send('Ignored while locked');
+  assert.equal(saved.get(key), JSON.stringify(second));
+  assert.equal(await unlockVault(reloaded, 'wrong but sufficiently long'), false);
+  assert.equal(reloaded.read('userHistory.length'), 0);
+  assert.equal(reloaded.elements.get('vault-unlock-passphrase').value, '');
+  assert.equal(await unlockVault(reloaded), true);
+  assert.equal(reloaded.read('vaultLocked'), false);
+  assert.equal(reloaded.read('userHistory.length'), 2);
+  assert.equal(reloaded.read('userHistory[1].text'), 'Private vault memory two');
+});
+
+test('vault restore and selective merge retain encryption and reject stale selections', async () => {
+  const donor = boot();
+  donor.send('Incoming protected merge');
+  const incoming = JSON.stringify(donor.read('stateSnapshot()'));
+  const saved = new Map();
+  const app = boot(saved);
+  app.send('Current protected merge');
+  assert.equal(await enableVault(app), true);
+  assert.equal(app.read(`reviewImportText(${JSON.stringify(incoming)})`), true);
+  const before = saved.get(key);
+  assert.equal(await app.read("applyReviewedImport('merge')"), true);
+  assert.equal(app.window.reloaded, true);
+  assert.notEqual(saved.get(key), before);
+  assert.doesNotMatch(saved.get(key), /Current protected merge|Incoming protected merge/);
+  const restored = boot(saved);
+  assert.equal(restored.read('vaultLocked'), true);
+  assert.equal(await unlockVault(restored), true);
+  assert.equal(restored.read('userHistory.length'), 2);
+
+  const replacement = JSON.stringify(donor.read('stateSnapshot()'));
+  assert.equal(restored.read(`reviewImportText(${JSON.stringify(replacement)})`), true);
+  restored.send('Newer protected interaction');
+  await restored.read('vaultWriteQueue');
+  const after = saved.get(key);
+  assert.equal(await restored.read('applyReviewedImport()'), false);
+  assert.equal(saved.get(key), after);
+  assert.doesNotMatch(after, /Newer protected interaction/);
+});
+
+test('an encrypted portable file restores into a separately encrypted browser vault', async () => {
+  const donor = boot();
+  donor.send('Sealed transfer across browsers');
+  donor.context.document.getElementById('export-passphrase').value = 'portable copy passphrase 2026';
+  donor.context.document.getElementById('export-confirm').value = 'portable copy passphrase 2026';
+  await donor.read('exportEncryptedState()');
+  const raw = await donor.exports[0].text();
+
+  const receiver = boot();
+  assert.equal(await enableVault(receiver), true);
+  receiver.context.document.getElementById('state-file').files = [{
+    name: 'portable.json', size: new Blob([raw]).size, text: async () => raw
+  }];
+  receiver.context.document.getElementById('import-passphrase').value = 'portable copy passphrase 2026';
+  await receiver.read('reviewImportFile()');
+  assert.equal(receiver.read('pendingImport !== null'), true);
+  assert.equal(await receiver.read('applyReviewedImport()'), true);
+  assert.doesNotMatch(receiver.saved.get(key), /Sealed transfer across browsers/);
+  const opened = boot(receiver.saved);
+  assert.equal(await unlockVault(opened), true);
+  assert.equal(opened.read('userHistory[0].text'), 'Sealed transfer across browsers');
+});
+
+test('vault rejects tampering, unknown formats, and cross-tab changes without plaintext fallback', async () => {
+  const saved = new Map();
+  const app = boot(saved);
+  app.send('Never silently replace this');
+  assert.equal(await enableVault(app), true);
+  const original = saved.get(key);
+  const envelope = JSON.parse(original);
+  const bytes = Buffer.from(envelope.ciphertext, 'base64');
+  bytes[0] ^= 1;
+  const tampered = JSON.stringify({...envelope, ciphertext: bytes.toString('base64')});
+  const damaged = boot(new Map([[key, tampered]]));
+  assert.equal(damaged.read('vaultLocked'), true);
+  assert.equal(await unlockVault(damaged), false);
+  damaged.send('Cannot overwrite while locked');
+  assert.equal(damaged.saved.get(key), tampered);
+
+  const unknown = JSON.stringify({...envelope, format: 'aru-remembrance-vault-v2'});
+  const future = boot(new Map([[key, unknown]]));
+  assert.equal(future.read('vaultLocked'), true);
+  assert.equal(await unlockVault(future), false);
+  future.send('Cannot downgrade');
+  assert.equal(future.saved.get(key), unknown);
+
+  saved.set(key, JSON.stringify({...envelope, iv: bytes.toString('base64').slice(0, 16)}));
+  app.window.fireStorage({key, newValue: saved.get(key)});
+  assert.equal(app.read('vaultLocked'), true);
+  assert.equal(app.read('userHistory.length'), 0);
+  assert.notEqual(saved.get(key), original);
+});
+
+test('vault write failure and unreadable old state preserve the stored bytes', async () => {
+  const seed = boot();
+  seed.send('Persisted protected entry');
+  assert.equal(await enableVault(seed), true);
+  const sealed = seed.saved.get(key);
+  const blocked = boot(seed.saved, false, true);
+  assert.equal(await unlockVault(blocked), true);
+  blocked.send('Unsaved protected entry');
+  await blocked.read('vaultWriteQueue');
+  assert.equal(seed.saved.get(key), sealed);
+  assert.equal(blocked.read('storageConflict'), true);
+  assert.equal(await blocked.read('lockVault()'), false);
+  assert.match(blocked.elements.get('vault-status').textContent, /A save failed/);
+
+  const corrupted = '{damaged';
+  const old = boot(new Map([[key, corrupted]]));
+  old.send('Still usable in memory');
+  assert.equal(old.read('userHistory.length'), 1);
+  assert.equal(old.saved.get(key), corrupted);
+  assert.equal(await enableVault(old), false);
+  assert.equal(old.saved.get(key), corrupted);
+});
+
+test('vault migration failure keeps the original plaintext, and locking waits for a save', async () => {
+  const plain = boot();
+  plain.send('Original unsealed memory');
+  const original = plain.saved.get(key);
+  const blocked = boot(plain.saved, false, true);
+  assert.equal(await enableVault(blocked), false);
+  assert.equal(plain.saved.get(key), original);
+  assert.equal(blocked.read('vaultSession'), null);
+
+  const saved = new Map();
+  const app = boot(saved);
+  assert.equal(await enableVault(app), true);
+  app.send('Save while locking');
+  const unload = {preventDefault() { unload.prevented = true; }};
+  app.window.listeners.get('beforeunload')(unload);
+  assert.equal(unload.prevented, true);
+  assert.equal(await app.read('lockVault()'), true);
+  assert.doesNotMatch(saved.get(key), /Save while locking/);
+  const reloaded = boot(saved);
+  assert.equal(await unlockVault(reloaded), true);
+  assert.equal(reloaded.read('userHistory[0].text'), 'Save while locking');
+});
+
+test('vault import aborts if an interaction changes state while restore starts', async () => {
+  const donor = boot();
+  donor.send('Donor memory');
+  const raw = JSON.stringify(donor.read('stateSnapshot()'));
+  const app = boot();
+  assert.equal(await enableVault(app), true);
+  assert.equal(app.read(`reviewImportText(${JSON.stringify(raw)})`), true);
+  const applying = app.read('applyReviewedImport()');
+  app.send('Newer local memory');
+  assert.equal(await applying, false);
+  await app.read('vaultWriteQueue');
+  assert.doesNotMatch(app.saved.get(key), /Donor memory|Newer local memory/);
+  const reloaded = boot(app.saved);
+  assert.equal(await unlockVault(reloaded), true);
+  assert.equal(reloaded.read('userHistory[0].text'), 'Newer local memory');
+});
+
+test('an unseen cross-tab write during encryption cannot be overwritten', async () => {
+  const saved = new Map();
+  const app = boot(saved);
+  assert.equal(await enableVault(app), true);
+  app.send('Write awaiting encryption');
+  const otherTabValue = JSON.stringify({...JSON.parse(saved.get(key)), iv: 'AAAAAAAAAAAAAAAA'});
+  saved.set(key, otherTabValue);
+  await app.read('vaultWriteQueue');
+  assert.equal(saved.get(key), otherTabValue);
+  assert.equal(app.read('vaultLocked'), true);
+  assert.equal(app.read('userHistory.length'), 0);
+});
+
+test('a forgotten vault can be erased from the locked screen without touching other keys', async () => {
+  const saved = new Map([['unrelated', 'keep']]);
+  const app = boot(saved);
+  app.send('Entry whose passphrase is lost');
+  assert.equal(await enableVault(app), true);
+  const locked = boot(saved);
+  assert.equal(locked.read('vaultLocked'), true);
+  locked.read('eraseState()');
+  assert.equal(locked.window.reloaded, true);
+  assert.equal(saved.has(key), false);
+  assert.equal(saved.get('unrelated'), 'keep');
+  assert.equal(boot(saved).read('vaultLocked'), false);
+});
+
+test('an already open plaintext tab cannot downgrade a newly enabled vault', async () => {
+  const saved = new Map();
+  const first = boot(saved);
+  first.send('Original protected value');
+  const olderTab = boot(saved);
+  assert.equal(await enableVault(first), true);
+  const sealed = saved.get(key);
+  olderTab.send('Another tab tries to save plaintext');
+  assert.equal(saved.get(key), sealed);
+  assert.equal(olderTab.read('storageConflict'), true);
+  assert.doesNotMatch(saved.get(key), /Original protected value|Another tab tries/);
 });
 
 test('reviewed transfer restores the exact exported memory and field after explicit acceptance', async () => {
