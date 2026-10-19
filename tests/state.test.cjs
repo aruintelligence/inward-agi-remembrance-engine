@@ -81,6 +81,13 @@ async function unlockVault(app, passphrase = vaultPassword) {
   return app.read('unlockVault()');
 }
 
+async function rotateVault(app, current, replacement, confirmation = replacement) {
+  app.context.document.getElementById('vault-rotate-current').value = current;
+  app.context.document.getElementById('vault-rotate-new').value = replacement;
+  app.context.document.getElementById('vault-rotate-confirm').value = confirmation;
+  return app.read('rotateVaultPassphrase()');
+}
+
 test('entries, retrieval ledger, and field snapshot survive reload', () => {
   const saved = new Map();
   const first = boot(saved);
@@ -176,6 +183,85 @@ test('selective removal in the vault remains encrypted and cannot overwrite a ch
   app.saved.set(key, external);
   assert.equal(await reloaded.read('commitForgottenMemory()'), false);
   assert.equal(app.saved.get(key), external);
+});
+
+test('vault passphrase rotation preserves saved memory with a new salt and revokes the old browser unlock', async () => {
+  const app = boot();
+  app.send('Private memory that survives rotation');
+  assert.equal(await enableVault(app), true);
+  const before = JSON.parse(app.saved.get(key));
+  const replacement = 'a completely different browser vault passphrase 2026';
+  assert.equal(await rotateVault(app, vaultPassword, replacement), true);
+  const after = JSON.parse(app.saved.get(key));
+  assert.equal(after.format, 'aru-remembrance-vault-v1');
+  assert.notEqual(after.salt, before.salt);
+  assert.notEqual(after.iv, before.iv);
+  assert.notEqual(after.ciphertext, before.ciphertext);
+  assert.doesNotMatch(app.saved.get(key), /Private memory that survives rotation/);
+  assert.equal(app.elements.get('vault-rotate-current').value, '');
+  assert.equal(app.elements.get('vault-rotate-new').value, '');
+  assert.equal(app.elements.get('vault-rotate-confirm').value, '');
+
+  const sealed = Buffer.from(after.ciphertext, 'base64');
+  const keyBytes = pbkdf2Sync(replacement, Buffer.from(after.salt, 'base64'), after.iterations, 32, 'sha256');
+  const decipher = createDecipheriv('aes-256-gcm', keyBytes, Buffer.from(after.iv, 'base64'));
+  decipher.setAAD(Buffer.from(after.format));
+  decipher.setAuthTag(sealed.subarray(-16));
+  const state = JSON.parse(Buffer.concat([decipher.update(sealed.subarray(0, -16)), decipher.final()]).toString());
+  assert.equal(state.user_history[0].text, 'Private memory that survives rotation');
+
+  const reloaded = boot(app.saved);
+  assert.equal(await unlockVault(reloaded), false);
+  assert.equal(reloaded.read('vaultLocked'), true);
+  assert.equal(await unlockVault(reloaded, replacement), true);
+  assert.equal(reloaded.read('userHistory[0].text'), 'Private memory that survives rotation');
+});
+
+test('wrong current passphrase, invalid new choice, and failed write preserve the old vault', async () => {
+  const app = boot();
+  app.send('Keep protected memory');
+  assert.equal(await enableVault(app), true);
+  const before = app.saved.get(key);
+  const replacement = 'a newly chosen long vault phrase';
+  assert.equal(await rotateVault(app, 'wrong current passphrase', replacement), false);
+  assert.match(app.elements.get('vault-status').textContent, /Current passphrase is incorrect/);
+  assert.equal(app.saved.get(key), before);
+  assert.equal(await rotateVault(app, vaultPassword, replacement, 'different confirmation'), false);
+  assert.equal(await rotateVault(app, vaultPassword, vaultPassword.normalize('NFD')), false);
+  assert.equal(await rotateVault(app, vaultPassword, 'too short'), false);
+  assert.equal(app.saved.get(key), before);
+
+  const blocked = boot(app.saved, false, true);
+  assert.equal(await unlockVault(blocked), true);
+  assert.equal(await rotateVault(blocked, vaultPassword, replacement), false);
+  assert.equal(app.saved.get(key), before);
+  assert.equal(blocked.read('vaultSession') !== null, true);
+  assert.equal(await blocked.read('lockVault()'), true);
+  assert.equal(await unlockVault(boot(app.saved)), true);
+});
+
+test('a cross-tab vault change during passphrase rotation is never overwritten', async () => {
+  const app = boot();
+  app.send('Do not lose this vault');
+  assert.equal(await enableVault(app), true);
+  let entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  app.context.rotationSealStarted = entered;
+  app.read(`const originalSealForRotation = sealVaultState;
+    sealVaultState = async (...args) => {
+      rotationSealStarted();
+      await new Promise(resolve => { globalThis.continueRotationSeal = resolve; });
+      return originalSealForRotation(...args);
+    };`);
+  const rotating = rotateVault(app, vaultPassword, 'a brand new protected phrase for rotation');
+  await started;
+  const competing = JSON.stringify({...JSON.parse(app.saved.get(key)), iv: Buffer.alloc(12, 8).toString('base64')});
+  app.saved.set(key, competing);
+  app.window.fireStorage({key, newValue: competing});
+  app.context.continueRotationSeal();
+  assert.equal(await rotating, false);
+  assert.equal(app.saved.get(key), competing);
+  assert.equal(app.read('vaultLocked'), true);
 });
 
 test('full memory refuses a 41st input without changing the draft, field, chat, or saved state', async () => {

@@ -19,7 +19,7 @@ It explores a memory-first design question:
 
 ## Implemented behavior
 
-- Browser-local remembrance events that survive reload when storage is available, with an optional encrypted vault
+- Browser-local remembrance events that survive reload when storage is available, with an optional encrypted vault and passphrase rotation
 - A deduplicated memory ledger
 - An evidence-aware lexical recall rule that abstains on unrelated or equally supported memories
 - A local Recall evidence lab that shows matching words without saving inspection queries
@@ -59,6 +59,8 @@ Use **Download unencrypted JSON** to keep a readable snapshot, including your en
 
 To encrypt this browser's future saves, first keep an encrypted download elsewhere, then use **Encrypt browser state** with a long, unique vault passphrase. This opt-in step atomically replaces this app's plaintext `localStorage` value with an authenticated encrypted envelope. **Lock browser vault** waits for pending saves, clears the app's loaded memory, and requires the passphrase on the next unlock or reload. A wrong passphrase or damaged vault is never replaced with a plaintext save. A saved value changed by another tab is preserved instead of silently overwritten. You can still choose an explicitly labeled unencrypted download while unlocked. If the passphrase is lost, the app cannot recover the vault; **Erase this browser's vault** deletes its saved value after confirmation. Earlier unencrypted downloads and device backups are unaffected by enabling the vault.
 
+To change the current browser vault passphrase while it is unlocked, open **Change browser vault passphrase**, enter the current passphrase and a different new one twice, then choose **Change vault passphrase**. The app waits for pending encrypted saves, checks the current passphrase against the saved vault, and replaces that complete encrypted value with a new salt, key, and IV in one browser storage write. A wrong current passphrase, blocked write, or changed saved value leaves the earlier vault intact. After success, the old passphrase cannot open this browser's new saved value; other open tabs must unlock the changed vault. Previously downloaded copies and device backups remain separate and may still require the old passphrase. Keep a new encrypted backup after rotating.
+
 To move either file to another browser, choose it under **Move your memory to this browser**, enter the passphrase if encrypted, select **Review selected JSON**, inspect the incoming entries and current-memory count, then choose **Replace local state with this file**. Review makes no changes. Restore replaces this app's local memory, retrieval labels, and field snapshot, then reloads. Download the current browser's state before replacing it if you want to retain both copies. **Erase local state** removes only this app's saved key after confirmation.
 
 To combine memory histories instead, use **Select current**, **Select incoming**, or the checkboxes, then **Merge selected memories**. The page lists every distinct text-and-timestamp pair with its source. An exact pair in both copies appears once; the same text with a different timestamp remains a separate event. A plan above 40 selected memories cannot be saved, and unchecked events are counted as excluded. Merge keeps the current browser's field and retrieval labels as captured when you reviewed the file; it adds only the selected history entries, sorted by their recorded timestamps. Those timestamps are editable and depend on device clocks, so the order is a display convention, not proof of when an event happened. The import file and existing browser state remain untouched until the final save. A successful save reloads the app; it does not create an undo copy, so download your current state before committing if you may need it later.
@@ -81,7 +83,7 @@ Run the local regression suite with Node.js 22 and Python 3 available:
 node tests/state.test.cjs
 ```
 
-It covers reload and retrieval, unsupported and ambiguous recall, independent Python verification, the initial empty-state label, response gating, malformed and blocked storage, both export formats, vault migration and locking, independent decryption, wrong passphrases, tampering, encrypted restore and merge, reviewed individual removal, full-capacity input refusal, deduplication, stale review, failed write, and erasure. [The retrieval protocol](RETRIEVAL_PROTOCOL.md) states the exact rule and shows how to recheck an unencrypted exported state without importing browser code.
+It covers reload and retrieval, unsupported and ambiguous recall, independent Python verification, the initial empty-state label, response gating, malformed and blocked storage, both export formats, vault migration, locking and passphrase rotation, independent decryption, wrong passphrases, tampering, encrypted restore and merge, reviewed individual removal, full-capacity input refusal, deduplication, stale review, failed write, and erasure. [The retrieval protocol](RETRIEVAL_PROTOCOL.md) states the exact rule and shows how to recheck an unencrypted exported state without importing browser code.
 
 To rebuild the committed stylesheet after editing classes, install the pinned build dependency and check the result:
 
@@ -93,7 +95,7 @@ npm test
 
 The build uses Tailwind only at development time. CI repeats the build and fails if the generated HTML differs from the committed file.
 
-The browser regression opens the committed HTML on a local server in headless Chromium. It exercises real Web Crypto and `localStorage`, lock and unlock, an encrypted download, reviewed removal in both vault and plaintext modes, full-capacity draft preservation, and reviewed restore in a separate browser context. To run it locally after `npm ci`:
+The browser regression opens the committed HTML on a local server in headless Chromium. It exercises real Web Crypto and `localStorage`, lock, unlock and passphrase rotation, an encrypted download, reviewed removal in both vault and plaintext modes, full-capacity draft preservation, and reviewed restore in a separate browser context. To run it locally after `npm ci`:
 
 ```bash
 npx playwright install --with-deps --only-shell chromium

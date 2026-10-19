@@ -8,6 +8,7 @@ const {chromium} = require('playwright');
 const pageHtml = fs.readFileSync(path.join(__dirname, '..', 'inward-agi-remembrance-engine-v11.html'));
 const storageKey = 'aru_remembrance_engine_v11_state';
 const vaultPassword = 'a unique browser vault passphrase 2026';
+const rotatedVaultPassword = 'a newly rotated browser vault passphrase 2026';
 const portablePassword = 'a different portable passphrase 2026';
 
 test('real browser: offline runtime, protected saves, lock, unlock, download, and reviewed transfer',
@@ -65,18 +66,46 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       await page.getByRole('button', {name: 'Unlock browser vault'}).click();
       await page.locator('#vault-lock').waitFor({state: 'hidden'});
       assert.equal(await page.locator('#memory-depth').textContent(), '1');
+
+      await page.getByText('Change browser vault passphrase').click();
+      await page.locator('#vault-rotate-current').fill('a wrong current passphrase');
+      await page.locator('#vault-rotate-new').fill(rotatedVaultPassword);
+      await page.locator('#vault-rotate-confirm').fill(rotatedVaultPassword);
+      await page.getByRole('button', {name: 'Change vault passphrase'}).click();
+      await page.locator('#vault-status').filter({hasText: /Current passphrase is incorrect/}).waitFor();
+      assert.equal(await page.evaluate(key => localStorage.getItem(key), storageKey), JSON.stringify(firstVault));
+
+      await page.locator('#vault-rotate-current').fill(vaultPassword);
+      await page.locator('#vault-rotate-new').fill(rotatedVaultPassword);
+      await page.locator('#vault-rotate-confirm').fill(rotatedVaultPassword);
+      await page.getByRole('button', {name: 'Change vault passphrase'}).click();
+      await page.waitForFunction(({key, oldSalt}) => JSON.parse(localStorage.getItem(key)).salt !== oldSalt,
+        {key: storageKey, oldSalt: firstVault.salt});
+      const rotatedVault = JSON.parse(await page.evaluate(key => localStorage.getItem(key), storageKey));
+      assert.notEqual(rotatedVault.iv, firstVault.iv);
+      assert.equal(await page.locator('#vault-rotate-current').inputValue(), '');
+      await page.reload();
+      await page.locator('#vault-unlock-passphrase').fill(vaultPassword);
+      await page.getByRole('button', {name: 'Unlock browser vault'}).click();
+      await page.locator('#vault-unlock-status').filter({hasText: /Wrong passphrase or damaged/}).waitFor();
+      assert.equal(await page.locator('#vault-lock').isVisible(), true);
+      await page.locator('#vault-unlock-passphrase').fill(rotatedVaultPassword);
+      await page.getByRole('button', {name: 'Unlock browser vault'}).click();
+      await page.locator('#vault-lock').waitFor({state: 'hidden'});
+      assert.equal(await page.locator('#memory-depth').textContent(), '1');
+
       await page.locator('#input').fill('A second private Corvallis memory');
       await page.getByRole('button', {name: 'SEND TO REMEMBRANCE'}).click();
       await page.waitForFunction(() => document.getElementById('storage-status').textContent.includes('Saved changes are encrypted here'));
       const secondVault = JSON.parse(await page.evaluate(key => localStorage.getItem(key), storageKey));
-      assert.notEqual(secondVault.iv, firstVault.iv);
-      assert.equal(secondVault.salt, firstVault.salt);
+      assert.notEqual(secondVault.iv, rotatedVault.iv);
+      assert.equal(secondVault.salt, rotatedVault.salt);
       assert.doesNotMatch(JSON.stringify(secondVault), /A second private Corvallis memory/);
 
       await page.getByRole('button', {name: 'Lock browser vault'}).click();
       await page.locator('#vault-lock').waitFor({state: 'visible'});
       assert.doesNotMatch(await page.locator('#chat').textContent(), /Corvallis memory|Corvallis sunrise/);
-      await page.locator('#vault-unlock-passphrase').fill(vaultPassword);
+      await page.locator('#vault-unlock-passphrase').fill(rotatedVaultPassword);
       await page.getByRole('button', {name: 'Unlock browser vault'}).click();
       await page.locator('#vault-lock').waitFor({state: 'hidden'});
       assert.equal(await page.locator('#memory-depth').textContent(), '2');

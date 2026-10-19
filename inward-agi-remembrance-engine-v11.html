@@ -195,6 +195,22 @@
             <div id="vault-active" hidden>
               <p class="text-slate-300 mb-3">Vault unlocked. New saves are encrypted on this device. Lock it when you finish; keep an encrypted file backup elsewhere.</p>
               <button type="button" onclick="lockVault()" class="rounded-xl border border-emerald-300/45 px-4 py-2 text-emerald-400">Lock browser vault</button>
+              <details class="mt-4 rounded-xl border border-white/10 p-3">
+                <summary class="font-semibold text-cyan-200">Change browser vault passphrase</summary>
+                <p class="text-slate-300 mt-3">This re-encrypts the current saved vault. Existing downloaded backups keep their original passphrases.</p>
+                <label for="vault-rotate-current" class="block mt-3 text-slate-200">Current vault passphrase
+                  <input id="vault-rotate-current" type="password" autocomplete="current-password" maxlength="1024" class="mt-1 w-full rounded-xl border border-white/20 bg-black/20 px-3 py-2 text-slate-100">
+                </label>
+                <div class="grid gap-2 sm:grid-cols-2 mt-3">
+                  <label for="vault-rotate-new" class="text-slate-200">New vault passphrase
+                    <input id="vault-rotate-new" type="password" autocomplete="new-password" maxlength="1024" class="mt-1 w-full rounded-xl border border-white/20 bg-black/20 px-3 py-2 text-slate-100">
+                  </label>
+                  <label for="vault-rotate-confirm" class="text-slate-200">Confirm new passphrase
+                    <input id="vault-rotate-confirm" type="password" autocomplete="new-password" maxlength="1024" class="mt-1 w-full rounded-xl border border-white/20 bg-black/20 px-3 py-2 text-slate-100">
+                  </label>
+                </div>
+                <button type="button" onclick="rotateVaultPassphrase()" class="mt-3 rounded-xl border border-cyan-400/50 px-4 py-2 text-cyan-200">Change vault passphrase</button>
+              </details>
             </div>
             <p id="vault-status" class="mt-2 text-slate-300" role="status" aria-live="polite"></p>
           </div>
@@ -478,6 +494,9 @@
       document.getElementById('import-passphrase').value = '';
       document.getElementById('export-passphrase').value = '';
       document.getElementById('export-confirm').value = '';
+      document.getElementById('vault-rotate-current').value = '';
+      document.getElementById('vault-rotate-new').value = '';
+      document.getElementById('vault-rotate-confirm').value = '';
       document.getElementById('chat').replaceChildren();
       document.getElementById('law-modal').classList?.add('hidden');
       renderLedger();
@@ -720,6 +739,62 @@
         return false;
       } finally {
         input.value = '';
+        vaultTransition = false;
+      }
+    }
+
+    async function rotateVaultPassphrase() {
+      if (!vaultSession || vaultLocked || vaultTransition) return false;
+      const currentInput = document.getElementById('vault-rotate-current');
+      const newInput = document.getElementById('vault-rotate-new');
+      const confirmation = document.getElementById('vault-rotate-confirm');
+      const status = document.getElementById('vault-status');
+      const currentPassphrase = currentInput.value;
+      const newPassphrase = newInput.value;
+      const session = vaultSession;
+      const revision = stateRevision;
+      vaultTransition = true;
+      try {
+        if (newPassphrase !== confirmation.value) throw new Error('New passphrases do not match.');
+        if (currentPassphrase.normalize('NFC') === newPassphrase.normalize('NFC')) {
+          throw new Error('Choose a different new passphrase.');
+        }
+        await vaultWriteQueue;
+        const previousRaw = localStorage.getItem(STORAGE_KEY);
+        const stillCurrent = () => session === vaultSession && !vaultLocked && !storageConflict &&
+          revision === stateRevision && session.lastRaw === previousRaw &&
+          lastStoredRaw === previousRaw && localStorage.getItem(STORAGE_KEY) === previousRaw;
+        if (!previousRaw || !stillCurrent()) throw new Error('Vault changed. Unlock the latest saved version before retrying.');
+        if (new Blob([previousRaw]).size > MAX_ENCRYPTED_BYTES) throw new Error('Browser vault is too large.');
+        let envelope;
+        try { envelope = JSON.parse(previousRaw); } catch (_) { throw new Error('Browser vault format is invalid.'); }
+        const {salt, iv, ciphertext} = vaultEnvelopeBytes(envelope);
+        const currentKey = await derivePortableKey(currentPassphrase, salt);
+        let savedState;
+        try { savedState = await openVaultState(currentKey, iv, ciphertext); }
+        catch (_) { throw new Error('Current passphrase is incorrect or the vault is damaged.'); }
+        if (!stillCurrent()) throw new Error('Vault changed while checking the current passphrase. Retry with the latest state.');
+        const newSalt = crypto.getRandomValues(new Uint8Array(16));
+        const newKey = await derivePortableKey(newPassphrase, newSalt);
+        const replacement = JSON.stringify(await sealVaultState(savedState, newKey, newSalt));
+        if (!stillCurrent()) throw new Error('Vault changed while re-encrypting. Retry with the latest state.');
+        localStorage.setItem(STORAGE_KEY, replacement);
+        vaultSession = {key: newKey, salt: newSalt, lastRaw: replacement};
+        lastStoredRaw = replacement;
+        storageAvailable = true;
+        stateRevision++;
+        cancelImportReview('Vault passphrase changed. Review the file again before restoring.');
+        cancelForgetReview('Vault passphrase changed. Review the memory again before removing it.');
+        status.textContent = 'Vault passphrase changed. Future browser unlocks require the new passphrase; existing downloaded copies are separate.';
+        showStorageStatus();
+        return true;
+      } catch (error) {
+        status.textContent = `Vault passphrase unchanged: ${error.message || 'Browser storage is unavailable.'}`;
+        return false;
+      } finally {
+        currentInput.value = '';
+        newInput.value = '';
+        confirmation.value = '';
         vaultTransition = false;
       }
     }
