@@ -112,8 +112,12 @@ test('reviewed removal writes one fewer memory, clears its label, and resets the
   assert.equal(app.read('reviewForget(0)'), true);
   assert.equal(app.elements.get('forget-preview').textContent, 'Private Corvallis sunrise');
   assert.equal(app.saved.get(key), before);
+  app.elements.get('input').value = 'Draft to keep';
   assert.equal(await app.read('commitForgottenMemory()'), true);
-  assert.equal(app.window.reloaded, true);
+  assert.equal(app.window.reloaded, undefined);
+  assert.equal(app.elements.get('input').value, 'Draft to keep');
+  assert.equal(app.read('userHistory.length'), 2);
+  assert.doesNotMatch(app.elements.get('chat').children.map(row => row.children[0].textContent).join(' '), /Private Corvallis sunrise/);
   const saved = JSON.parse(app.saved.get(key));
   assert.equal(saved.user_history.length, 2);
   assert.ok(saved.user_history.every(entry => entry.text !== 'Private Corvallis sunrise'));
@@ -172,6 +176,55 @@ test('selective removal in the vault remains encrypted and cannot overwrite a ch
   app.saved.set(key, external);
   assert.equal(await reloaded.read('commitForgottenMemory()'), false);
   assert.equal(app.saved.get(key), external);
+});
+
+test('full memory refuses a 41st input without changing the draft, field, chat, or saved state', async () => {
+  const app = boot();
+  for (let index = 0; index < 35; index++) app.send(`Memory ${index} unique`);
+  assert.match(app.elements.get('capacity-status').textContent, /5 spaces remain/);
+  for (let index = 35; index < 40; index++) app.send(`Memory ${index} unique`);
+  const before = app.saved.get(key);
+  const field = JSON.stringify(app.read('Array.from(mu)'));
+  const chatCount = app.elements.get('chat').children.length;
+  app.elements.get('input').value = 'The waiting forty-first entry';
+  assert.equal(app.read('sendToField()'), false);
+  assert.equal(app.elements.get('input').value, 'The waiting forty-first entry');
+  assert.match(app.elements.get('send-status').textContent, /Entry not saved/);
+  assert.match(app.elements.get('capacity-status').textContent, /40 of 40/);
+  assert.equal(app.read('userHistory.length'), 40);
+  assert.equal(app.elements.get('chat').children.length, chatCount);
+  assert.equal(JSON.stringify(app.read('Array.from(mu)')), field);
+  assert.equal(app.saved.get(key), before);
+
+  assert.equal(app.read('reviewForget(0)'), true);
+  assert.equal(await app.read('commitForgottenMemory()'), true);
+  assert.equal(app.elements.get('input').value, 'The waiting forty-first entry');
+  assert.equal(app.read('userHistory.length'), 39);
+  app.read('sendToField()');
+  assert.equal(app.read('userHistory.length'), 40);
+  assert.equal(app.read('userHistory[39].text'), 'The waiting forty-first entry');
+  assert.equal(app.read('userHistory.some(entry => entry.text === "Memory 0 unique")'), false);
+});
+
+test('the full encrypted vault also refuses new input without overwriting its ciphertext', async () => {
+  const app = boot();
+  for (let index = 0; index < 40; index++) app.send(`Protected memory ${index}`);
+  assert.equal(await enableVault(app), true);
+  const before = app.saved.get(key);
+  app.elements.get('input').value = 'Vault draft at capacity';
+  assert.equal(app.read('sendToField()'), false);
+  assert.equal(app.elements.get('input').value, 'Vault draft at capacity');
+  assert.equal(app.saved.get(key), before);
+  assert.equal(app.read('vaultPendingWrites'), 0);
+  assert.equal(app.read('reviewForget(0)'), true);
+  assert.equal(await app.read('commitForgottenMemory()'), true);
+  assert.equal(app.elements.get('input').value, 'Vault draft at capacity');
+  app.read('sendToField()');
+  await app.read('vaultWriteQueue');
+  const locked = boot(app.saved);
+  assert.equal(await unlockVault(locked), true);
+  assert.equal(locked.read('userHistory.length'), 40);
+  assert.equal(locked.read('userHistory[39].text'), 'Vault draft at capacity');
 });
 
 test('a cross-tab change during selective vault removal wins over the delayed encryption', async () => {

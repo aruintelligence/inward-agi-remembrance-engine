@@ -94,15 +94,13 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       await page.getByRole('button', {name: 'Review removal of memory 1'}).click();
       assert.equal(await page.locator('#forget-preview').textContent(), 'Corvallis sunrise belongs to this vault');
       const beforeRemoval = await page.evaluate(key => localStorage.getItem(key), storageKey);
-      await Promise.all([
-        page.waitForEvent('load'),
-        page.getByRole('button', {name: 'Remove this saved entry'}).click()
-      ]);
+      await page.locator('#input').fill('Vault draft waiting for a space');
+      await page.getByRole('button', {name: 'Remove this saved entry'}).click();
+      await page.waitForFunction(({key, before}) => localStorage.getItem(key) !== before,
+        {key: storageKey, before: beforeRemoval});
       assert.notEqual(await page.evaluate(key => localStorage.getItem(key), storageKey), beforeRemoval);
-      assert.equal(await page.locator('#vault-lock').isVisible(), true);
-      await page.locator('#vault-unlock-passphrase').fill(vaultPassword);
-      await page.getByRole('button', {name: 'Unlock browser vault'}).click();
-      await page.locator('#vault-lock').waitFor({state: 'hidden'});
+      assert.equal(await page.locator('#vault-lock').isVisible(), false);
+      assert.equal(await page.locator('#input').inputValue(), 'Vault draft waiting for a space');
       assert.equal(await page.locator('#memory-depth').textContent(), '1');
       assert.equal(await page.locator('#memory-entries').textContent().then(text => text.includes('Corvallis sunrise belongs')), false);
       assert.doesNotMatch(await page.locator('#chat').textContent(), /Corvallis sunrise belongs/);
@@ -126,13 +124,35 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       assert.equal(JSON.parse(await receivingPage.evaluate(key => localStorage.getItem(key), storageKey)).user_history.length, 2);
       await receivingPage.getByText('Review and remove saved memories').click();
       await receivingPage.getByRole('button', {name: 'Review removal of memory 1'}).click();
-      await Promise.all([
-        receivingPage.waitForEvent('load'),
-        receivingPage.getByRole('button', {name: 'Remove this saved entry'}).click()
-      ]);
+      await receivingPage.getByRole('button', {name: 'Remove this saved entry'}).click();
+      await receivingPage.locator('#memory-depth').filter({hasText: /^1$/}).waitFor();
       const remaining = JSON.parse(await receivingPage.evaluate(key => localStorage.getItem(key), storageKey));
       assert.deepEqual(remaining.user_history.map(entry => entry.text), ['A second private Corvallis memory']);
       assert.ok(remaining.field.every(value => value === 0.1));
+
+      await receivingPage.evaluate(() => {
+        for (let index = 0; index < 39; index++) {
+          document.getElementById('input').value = `Capacity filler ${index}`;
+          sendToField();
+        }
+      });
+      assert.equal(await receivingPage.locator('#memory-depth').textContent(), '40');
+      const fullSnapshot = await receivingPage.evaluate(key => localStorage.getItem(key), storageKey);
+      await receivingPage.locator('#input').fill('The forty-first browser draft');
+      await receivingPage.getByRole('button', {name: 'SEND TO REMEMBRANCE'}).click();
+      assert.equal(await receivingPage.locator('#input').inputValue(), 'The forty-first browser draft');
+      assert.match(await receivingPage.locator('#send-status').textContent(), /Entry not saved/);
+      assert.equal(await receivingPage.evaluate(key => localStorage.getItem(key), storageKey), fullSnapshot);
+      await receivingPage.getByRole('button', {name: 'Manage memories'}).click();
+      assert.equal(await receivingPage.locator('#memory-control').evaluate(el => el.open), true);
+      await receivingPage.getByRole('button', {name: 'Review removal of memory 1'}).click();
+      await receivingPage.getByRole('button', {name: 'Remove this saved entry'}).click();
+      await receivingPage.locator('#memory-depth').filter({hasText: /^39$/}).waitFor();
+      assert.equal(await receivingPage.locator('#input').inputValue(), 'The forty-first browser draft');
+      await receivingPage.getByRole('button', {name: 'SEND TO REMEMBRANCE'}).click();
+      assert.equal(await receivingPage.locator('#memory-depth').textContent(), '40');
+      assert.equal(JSON.parse(await receivingPage.evaluate(key => localStorage.getItem(key), storageKey)).user_history.at(-1).text,
+        'The forty-first browser draft');
       assert.deepEqual(remoteRequests, []);
       assert.deepEqual(pageErrors, []);
       await receiver.close();

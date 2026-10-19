@@ -156,7 +156,7 @@
           <div id="retrieval-audit" class="mt-3 text-slate-300 leading-relaxed" role="status" aria-live="polite">No query inspected yet.</div>
         </div>
 
-        <details class="glass rounded-[1.25rem] p-4 text-sm">
+        <details id="memory-control" class="glass rounded-[1.25rem] p-4 text-sm">
           <summary class="font-semibold text-cyan-300">Review and remove saved memories</summary>
           <p class="text-slate-300 mt-3">Choose an entry to review before removing it from this browser's saved history. Removal also clears retrieval labels for that text and resets the visual field. Other open tabs, downloads, and device backups may still have copies.</p>
           <ol id="memory-entries" class="mt-3 max-h-56 overflow-y-auto space-y-2 break-words"></ol>
@@ -259,6 +259,9 @@
         <div class="glass rounded-[1.7rem] p-5 md:p-6">
           <label for="input" class="tiny text-slate-400 block mb-3">Speak into the remembrance field</label>
           <input id="input" type="text" maxlength="2000" placeholder="Enter a thought, intention, or remembered truth..." class="w-full bg-transparent text-lg text-slate-100 placeholder:text-slate-500 outline-none">
+          <p id="capacity-status" class="text-sm text-slate-300 mt-3" role="status" aria-live="polite"></p>
+          <p id="send-status" class="text-sm text-amber-300 mt-2" role="status" aria-live="polite"></p>
+          <button type="button" onclick="openMemoryControl()" class="mt-2 text-sm text-cyan-200 underline">Manage memories</button>
           <div class="flex flex-col sm:flex-row gap-3 mt-6">
             <button onclick="sendToField()" class="button-soft px-8 py-4 rounded-[1.25rem] bg-emerald-400 text-black font-semibold hover:bg-emerald-300 flex-1">SEND TO REMEMBRANCE</button>
             <button onclick="triggerGuardianVeto()" class="button-soft px-8 py-4 rounded-[1.25rem] border border-rose-400/65 text-rose-300 hover:bg-rose-400/10 flex-1">GUARDIAN VETO™</button>
@@ -328,6 +331,7 @@
     const STORAGE_KEY = 'aru_remembrance_engine_v11_state';
     const MAX_IMPORT_BYTES = 256 * 1024;
     const MAX_ENCRYPTED_BYTES = 512 * 1024;
+    const MAX_MEMORIES = 40;
     const ENCRYPTED_FORMAT = 'aru-remembrance-encrypted-v1';
     const VAULT_FORMAT = 'aru-remembrance-vault-v1';
     const KDF_ITERATIONS = 600000;
@@ -438,7 +442,7 @@
       if (Array.isArray(state.user_history)) {
         userHistory = state.user_history
           .filter(entry => entry && typeof entry.text === 'string')
-          .slice(-40)
+          .slice(-MAX_MEMORIES)
           .map(entry => {
             const text = entry.text.slice(0, 2000);
             return {text, tokens: tokenize(text), ts: Number.isFinite(entry.ts) ? entry.ts : Date.now()};
@@ -466,6 +470,7 @@
       memoryTraces = [];
       mu = new Float32Array(FIELD_WIDTH).fill(MU_BASE);
       document.getElementById('input').value = '';
+      document.getElementById('send-status').textContent = '';
       document.getElementById('retrieval-query').value = '';
       document.getElementById('retrieval-audit').textContent = 'Vault locked. Unlock before inspecting recall.';
       document.getElementById('import-summary').textContent = '';
@@ -702,6 +707,7 @@
         document.getElementById('app-shell').inert = false;
         document.getElementById('vault-status').textContent = 'Vault unlocked. New saves are encrypted in this browser.';
         document.getElementById('chat').replaceChildren();
+        document.getElementById('send-status').textContent = '';
         renderLedger();
         renderMemoryList();
         appendMessage(`Restored ${userHistory.length} protected remembrance entries.\nWhat would you like to revisit?`, false);
@@ -796,7 +802,7 @@
           Number.isNaN(Date.parse(value.saved_at))) throw new Error('Export date is invalid.');
       const validEntry = (e, limit) => keysAre(e, ['text', 'ts']) && typeof e.text === 'string' &&
         e.text.length > 0 && e.text.length <= limit && Number.isSafeInteger(e.ts) && e.ts >= 0;
-      if (!Array.isArray(value.user_history) || value.user_history.length > 40 ||
+      if (!Array.isArray(value.user_history) || value.user_history.length > MAX_MEMORIES ||
           !value.user_history.every(e => validEntry(e, 2000))) throw new Error('Memory entries are incomplete or exceed their limits.');
       if (!Array.isArray(value.ledger_entries) || value.ledger_entries.length > 3 ||
           !value.ledger_entries.every(e => validEntry(e, 29))) throw new Error('Retrieval labels are incomplete or exceed their limits.');
@@ -841,8 +847,8 @@
       const selected = mergeSelection().length;
       const total = pendingImport?.candidates.length || 0;
       document.getElementById('merge-count').textContent =
-        `${selected} selected of ${total} distinct memories; ${total - selected} excluded. ${selected > 40 ? 'Select 40 or fewer to merge.' : selected === 0 ? 'Select at least one to merge.' : 'Ready to merge.'}`;
-      document.getElementById('merge-commit').disabled = !pendingImport || selected === 0 || selected > 40;
+        `${selected} selected of ${total} distinct memories; ${total - selected} excluded. ${selected > MAX_MEMORIES ? 'Select 40 or fewer to merge.' : selected === 0 ? 'Select at least one to merge.' : 'Ready to merge.'}`;
+      document.getElementById('merge-commit').disabled = !pendingImport || selected === 0 || selected > MAX_MEMORIES;
     }
 
     function selectMergeSource(source) {
@@ -952,7 +958,7 @@
       let next = state;
       if (mode === 'merge') {
         const selected = mergeSelection();
-        if (selected.length === 0 || selected.length > 40) {
+        if (selected.length === 0 || selected.length > MAX_MEMORIES) {
           updateMergeSelection();
           return false;
         }
@@ -1073,6 +1079,16 @@
         sub.textContent = 'Expansion pressure exceeds coherence margin. The field may contract to preserve itself.';
       }
       document.getElementById('memory-depth').textContent = userHistory.length;
+      const used = userHistory.length;
+      const capacity = document.getElementById('capacity-status');
+      const message = vaultLocked
+        ? 'Browser vault locked. Memory capacity is available after unlock.'
+        : used >= MAX_MEMORIES
+        ? `${MAX_MEMORIES} of ${MAX_MEMORIES} memories used. New entries are paused to protect older memories. Review and remove one to continue.`
+        : used >= MAX_MEMORIES - 5
+          ? `${used} of ${MAX_MEMORIES} memories used. ${MAX_MEMORIES - used} space${MAX_MEMORIES - used === 1 ? '' : 's'} remain; consider an encrypted backup.`
+          : `${used} of ${MAX_MEMORIES} memories used.`;
+      if (capacity.textContent !== message) capacity.textContent = message;
     }
 
     function applyTraceForces() {
@@ -1208,6 +1224,12 @@
       document.getElementById('memory-manage-status').textContent = message;
     }
 
+    function openMemoryControl() {
+      const details = document.getElementById('memory-control');
+      details.open = true;
+      details.scrollIntoView?.({behavior: 'smooth', block: 'start'});
+    }
+
     function renderMemoryList() {
       const list = document.getElementById('memory-entries');
       list.replaceChildren();
@@ -1259,6 +1281,7 @@
     async function commitForgottenMemory() {
       if (!pendingForget || vaultLocked || vaultTransition || storageConflict) return false;
       const review = pendingForget;
+      let next;
       vaultTransition = true;
       try {
         if (review.session) await vaultWriteQueue;
@@ -1273,7 +1296,7 @@
           return false;
         }
         const label = review.text.substring(0, 28) + (review.text.length > 28 ? '…' : '');
-        const next = {...stateSnapshot(),
+        next = {...stateSnapshot(),
           user_history: userHistory.filter((_, index) => index !== review.index).map(({text, ts}) => ({text, ts})),
           ledger_entries: ledgerEntries.filter(entry => entry.text !== label),
           field: Array(FIELD_WIDTH).fill(MU_BASE)};
@@ -1287,15 +1310,29 @@
         localStorage.setItem(STORAGE_KEY, serialized);
         lastStoredRaw = serialized;
         if (vaultSession) vaultSession.lastRaw = serialized;
-        cancelForgetReview('Memory removed from saved state. Reloading…');
-        window.location.reload();
-        return true;
+        storageAvailable = true;
       } catch (_) {
         cancelForgetReview('Removal failed: browser storage could not be updated. Your saved memory was preserved.');
         return false;
       } finally {
         vaultTransition = false;
       }
+      stateRevision++;
+      cancelImportReview('Local memory changed. Review the file again before restoring.');
+      cancelForgetReview('Memory removed from saved state. Your unsent draft is still available.');
+      hydrateState(next);
+      memoryTraces = [];
+      document.getElementById('retrieval-query').value = '';
+      document.getElementById('retrieval-audit').textContent = 'Memory changed. Inspect recall again for current evidence.';
+      document.getElementById('chat').replaceChildren();
+      appendMessage('One saved memory was removed. The visual field was reset.', false);
+      document.getElementById('send-status').textContent = '';
+      renderLedger();
+      renderMemoryList();
+      coherence = calculateCoherence();
+      updateFieldStateUI();
+      showStorageStatus();
+      return true;
     }
 
     function updateLedger(rememberedText) {
@@ -1408,6 +1445,11 @@
       const input = document.getElementById('input');
       const text = input.value.trim().slice(0, 2000);
       if (!text) return;
+      if (userHistory.length >= MAX_MEMORIES) {
+        document.getElementById('send-status').textContent = 'Entry not saved: all 40 memory spaces are in use. Your draft is still here. Review and remove a saved memory first.';
+        return false;
+      }
+      document.getElementById('send-status').textContent = '';
 
       appendMessage(text, true);
       input.value = '';
@@ -1450,7 +1492,6 @@
       appendMessage(reply.text, false);
 
       userHistory.push({ text, tokens: tokenize(text), ts: Date.now() });
-      if (userHistory.length > 40) userHistory.shift();
       renderMemoryList();
       coherence = calculateCoherence();
       updateFieldStateUI();
