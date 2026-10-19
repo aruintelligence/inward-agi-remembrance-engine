@@ -87,6 +87,15 @@ npm test
 
 The build uses Tailwind only at development time. CI repeats the build and fails if the generated HTML differs from the committed file.
 
+The browser regression opens the committed HTML on a local server in headless Chromium. It exercises real Web Crypto and `localStorage`, lock and unlock, an encrypted download, and reviewed restore in a separate browser context. To run it locally after `npm ci`:
+
+```bash
+npx playwright install --with-deps --only-shell chromium
+npm run test:browser
+```
+
+CI runs both the Node suite and this browser test. The browser test rejects unexpected remote requests and uncaught page errors.
+
 ## Conceptual vocabulary
 
 The prototype draws on the Inward Physics™ research program:

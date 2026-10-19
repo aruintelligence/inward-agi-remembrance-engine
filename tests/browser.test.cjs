@@ -1,0 +1,118 @@
+const {test} = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const http = require('node:http');
+const path = require('node:path');
+const {chromium} = require('playwright');
+
+const pageHtml = fs.readFileSync(path.join(__dirname, '..', 'inward-agi-remembrance-engine-v11.html'));
+const storageKey = 'aru_remembrance_engine_v11_state';
+const vaultPassword = 'a unique browser vault passphrase 2026';
+const portablePassword = 'a different portable passphrase 2026';
+
+test('real browser: offline runtime, protected saves, lock, unlock, download, and reviewed transfer',
+  {timeout: 120000}, async () => {
+    const server = http.createServer((req, res) => {
+      if (req.url === '/engine.html') {
+        res.writeHead(200, {'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store'});
+        res.end(pageHtml);
+      } else {
+        res.writeHead(204);
+        res.end();
+      }
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    let browser;
+    try {
+      const origin = `http://127.0.0.1:${server.address().port}`;
+      browser = await chromium.launch({headless: true});
+      const context = await browser.newContext({acceptDownloads: true});
+      const page = await context.newPage();
+      const pageErrors = [];
+      const remoteRequests = [];
+      page.on('pageerror', error => pageErrors.push(error.message));
+      page.on('request', request => {
+        if (/^https?:/.test(request.url()) && !request.url().startsWith(origin + '/')) {
+          remoteRequests.push(request.url());
+        }
+      });
+
+      await page.goto(origin + '/engine.html');
+      assert.equal(await page.evaluate(() => !!globalThis.crypto?.subtle), true);
+      await page.locator('#input').fill('Corvallis sunrise belongs to this vault');
+      await page.getByRole('button', {name: 'SEND TO REMEMBRANCE'}).click();
+      const plain = await page.evaluate(key => localStorage.getItem(key), storageKey);
+      assert.match(plain, /Corvallis sunrise belongs to this vault/);
+
+      await page.locator('#vault-passphrase').fill(vaultPassword);
+      await page.locator('#vault-confirm').fill(vaultPassword);
+      await page.getByRole('button', {name: 'Encrypt browser state'}).click();
+      await page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).format === 'aru-remembrance-vault-v1', storageKey);
+      const firstVault = JSON.parse(await page.evaluate(key => localStorage.getItem(key), storageKey));
+      assert.doesNotMatch(JSON.stringify(firstVault), /Corvallis sunrise belongs to this vault/);
+
+      await page.reload();
+      assert.equal(await page.locator('#vault-lock').isVisible(), true);
+      assert.equal(await page.locator('#app-shell').evaluate(el => el.inert), true);
+      assert.doesNotMatch(await page.locator('#chat').textContent(), /Corvallis sunrise/);
+      await page.locator('#vault-unlock-passphrase').fill('wrong but sufficiently long');
+      await page.getByRole('button', {name: 'Unlock browser vault'}).click();
+      await page.locator('#vault-unlock-status').filter({hasText: /Wrong passphrase or damaged/}).waitFor();
+      assert.equal(await page.locator('#vault-lock').isVisible(), true);
+      assert.equal(await page.evaluate(key => localStorage.getItem(key), storageKey), JSON.stringify(firstVault));
+
+      await page.locator('#vault-unlock-passphrase').fill(vaultPassword);
+      await page.getByRole('button', {name: 'Unlock browser vault'}).click();
+      await page.locator('#vault-lock').waitFor({state: 'hidden'});
+      assert.equal(await page.locator('#memory-depth').textContent(), '1');
+      await page.locator('#input').fill('A second private Corvallis memory');
+      await page.getByRole('button', {name: 'SEND TO REMEMBRANCE'}).click();
+      await page.waitForFunction(() => document.getElementById('storage-status').textContent.includes('Saved changes are encrypted here'));
+      const secondVault = JSON.parse(await page.evaluate(key => localStorage.getItem(key), storageKey));
+      assert.notEqual(secondVault.iv, firstVault.iv);
+      assert.equal(secondVault.salt, firstVault.salt);
+      assert.doesNotMatch(JSON.stringify(secondVault), /A second private Corvallis memory/);
+
+      await page.getByRole('button', {name: 'Lock browser vault'}).click();
+      await page.locator('#vault-lock').waitFor({state: 'visible'});
+      assert.doesNotMatch(await page.locator('#chat').textContent(), /Corvallis memory|Corvallis sunrise/);
+      await page.locator('#vault-unlock-passphrase').fill(vaultPassword);
+      await page.getByRole('button', {name: 'Unlock browser vault'}).click();
+      await page.locator('#vault-lock').waitFor({state: 'hidden'});
+      assert.equal(await page.locator('#memory-depth').textContent(), '2');
+
+      await page.locator('#export-passphrase').fill(portablePassword);
+      await page.locator('#export-confirm').fill(portablePassword);
+      const downloadPromise = page.waitForEvent('download');
+      await page.getByRole('button', {name: 'Download encrypted JSON'}).click();
+      const download = await downloadPromise;
+      const downloaded = fs.readFileSync(await download.path(), 'utf8');
+      assert.equal(JSON.parse(downloaded).format, 'aru-remembrance-encrypted-v1');
+      assert.doesNotMatch(downloaded, /Corvallis sunrise|A second private/);
+
+      const receiver = await browser.newContext();
+      const receivingPage = await receiver.newPage();
+      receivingPage.on('pageerror', error => pageErrors.push(error.message));
+      await receivingPage.goto(origin + '/engine.html');
+      await receivingPage.locator('#state-file').setInputFiles({
+        name: 'portable.json', mimeType: 'application/json', buffer: Buffer.from(downloaded)
+      });
+      await receivingPage.locator('#import-passphrase').fill(portablePassword);
+      await receivingPage.getByRole('button', {name: 'Review selected JSON'}).click();
+      await receivingPage.locator('#import-summary').filter({hasText: /2 incoming memories/}).waitFor();
+      assert.equal(await receivingPage.evaluate(key => localStorage.getItem(key), storageKey), null);
+      await Promise.all([
+        receivingPage.waitForEvent('load'),
+        receivingPage.getByRole('button', {name: 'Replace local state with this file'}).click()
+      ]);
+      assert.equal(await receivingPage.locator('#memory-depth').textContent(), '2');
+      assert.equal(JSON.parse(await receivingPage.evaluate(key => localStorage.getItem(key), storageKey)).user_history.length, 2);
+      assert.deepEqual(remoteRequests, []);
+      assert.deepEqual(pageErrors, []);
+      await receiver.close();
+      await context.close();
+    } finally {
+      if (browser) await browser.close();
+      await new Promise(resolve => server.close(resolve));
+    }
+  });

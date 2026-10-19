@@ -16,3 +16,5 @@ jobs:
       - run: npm run build:styles
       - run: git diff --exit-code -- inward-agi-remembrance-engine-v11.html
       - run: npm test
+      - run: npx playwright install --with-deps --only-shell chromium
+      - run: npm run test:browser
