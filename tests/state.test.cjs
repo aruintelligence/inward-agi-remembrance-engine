@@ -10,7 +10,7 @@ const html = fs.readFileSync(path.join(__dirname, '..', 'inward-agi-remembrance-
 const source = html.match(/<script>([\s\S]*?)<\/script>/)[1];
 const key = 'aru_remembrance_engine_v11_state';
 
-function boot(saved = new Map(), storageBlocked = false) {
+function boot(saved = new Map(), storageBlocked = false, storageWriteBlocked = false) {
   const elements = new Map();
   const exports = [];
   class Element {
@@ -39,7 +39,7 @@ function boot(saved = new Map(), storageBlocked = false) {
   };
   const localStorage = {
     getItem(k) { if (storageBlocked) throw new Error('blocked'); return saved.get(k) || null; },
-    setItem(k, v) { if (storageBlocked) throw new Error('blocked'); saved.set(k, v); },
+    setItem(k, v) { if (storageBlocked || storageWriteBlocked) throw new Error('blocked'); saved.set(k, v); },
     removeItem(k) { if (storageBlocked) throw new Error('blocked'); saved.delete(k); }
   };
   const window = {
@@ -114,6 +114,110 @@ test('export includes text and erasure removes only the app state', async () => 
   assert.equal(app.window.reloaded, true);
   assert.equal(app.saved.get('unrelated'), 'keep');
   assert.equal(app.saved.has(key), false);
+});
+
+test('reviewed transfer restores the exact exported memory and field after explicit acceptance', async () => {
+  const donor = boot();
+  donor.send('Corvallis sunrise');
+  donor.send('Do you remember Corvallis sunrise?');
+  donor.read('exportState()');
+  const raw = await donor.exports[0].text();
+  const original = JSON.parse(raw);
+  const saved = new Map([['unrelated', 'keep']]);
+  const receiver = boot(saved);
+  receiver.send('A different local memory');
+  const before = saved.get(key);
+  receiver.context.document.getElementById('state-file').files = [{
+    name: 'transfer.json', size: new Blob([raw]).size, text: async () => raw
+  }];
+  await receiver.read('reviewImportFile()');
+  assert.equal(receiver.read('pendingImport !== null'), true);
+  assert.equal(saved.get(key), before);
+  assert.equal(receiver.read('userHistory.length'), 1);
+  assert.match(receiver.elements.get('import-summary').textContent, /2 incoming memories/);
+  assert.equal(receiver.elements.get('import-entries').children.length, 2);
+  assert.equal(receiver.elements.get('import-entries').children[0].textContent, 'Corvallis sunrise');
+  assert.equal(receiver.elements.get('import-review').hidden, false);
+  assert.equal(receiver.read('applyReviewedImport()'), true);
+  assert.equal(receiver.window.reloaded, true);
+  assert.equal(saved.get('unrelated'), 'keep');
+  const restored = boot(saved);
+  assert.equal(restored.read('userHistory.length'), 2);
+  assert.equal(restored.read('userHistory[0].text'), 'Corvallis sunrise');
+  assert.deepEqual(JSON.parse(saved.get(key)).user_history, original.user_history);
+  assert.deepEqual(JSON.parse(saved.get(key)).ledger_entries, original.ledger_entries);
+  assert.deepEqual(JSON.parse(saved.get(key)).field, original.field);
+});
+
+test('invalid and hostile exports cannot replace local state or inject HTML', () => {
+  const app = boot();
+  app.send('Keep this memory');
+  const before = app.saved.get(key);
+  const valid = JSON.parse(JSON.stringify(app.read('stateSnapshot()')));
+  const cases = [
+    '{broken',
+    JSON.stringify({...valid, schema_version: 2}),
+    JSON.stringify({...valid, field: valid.field.slice(1)}),
+    JSON.stringify({...valid, field: [3, ...valid.field.slice(1)]}),
+    JSON.stringify({...valid, ledger_entries: [{text: 'x'.repeat(30), ts: 1}]}),
+    JSON.stringify({...valid, user_history: [{text: 'x'.repeat(2001), ts: 1}]}),
+    JSON.stringify({...valid, user_history: Array(41).fill({text: 'x', ts: 1})}),
+    JSON.stringify({...valid, field: undefined}),
+    ' '.repeat(256 * 1024 + 1)
+  ];
+  for (const raw of cases) {
+    assert.equal(app.read(`reviewImportText(${JSON.stringify(raw)})`), false);
+    assert.equal(app.read('applyReviewedImport()'), false);
+    assert.equal(app.saved.get(key), before);
+    assert.equal(app.elements.get('import-review').hidden, true);
+  }
+  const hostile = {...valid, user_history: [{text: '<img src=x onerror=alert(1)>', ts: 1}]};
+  assert.equal(app.read(`reviewImportText(${JSON.stringify(JSON.stringify(hostile))})`), true);
+  assert.equal(app.elements.get('import-entries').children[0].textContent, hostile.user_history[0].text);
+  assert.equal(app.elements.get('import-entries').children[0].innerHTML, '');
+  assert.equal(app.saved.get(key), before);
+});
+
+test('a later interaction, different file, or another tab makes the review stale', async () => {
+  const app = boot();
+  app.send('Existing');
+  const raw = JSON.stringify(app.read('stateSnapshot()'));
+  assert.equal(app.read(`reviewImportText(${JSON.stringify(raw)})`), true);
+  app.send('New interaction');
+  const changed = app.saved.get(key);
+  assert.equal(app.read('applyReviewedImport()'), false);
+  assert.equal(app.saved.get(key), changed);
+
+  assert.equal(app.read(`reviewImportText(${JSON.stringify(raw)})`), true);
+  app.saved.set(key, JSON.stringify({...JSON.parse(changed), saved_at: '2026-01-01T00:00:00.000Z'}));
+  const otherTab = app.saved.get(key);
+  assert.equal(app.read('applyReviewedImport()'), false);
+  assert.equal(app.saved.get(key), otherTab);
+  assert.match(app.elements.get('import-status').textContent, /another tab/);
+
+  const file = {name: 'old.json', size: 100, text: () => new Promise(resolve => { file.resolve = resolve; })};
+  app.context.document.getElementById('state-file').files = [file];
+  const reading = app.read('reviewImportFile()');
+  app.elements.get('state-file').files = [{name: 'new.json'}];
+  app.read("cancelImportReview('Selection changed.')");
+  file.resolve(raw);
+  await reading;
+  assert.equal(app.read('pendingImport'), null);
+  assert.equal(app.saved.get(key), otherTab);
+});
+
+test('failed storage write leaves the existing memory untouched', () => {
+  const seed = boot();
+  seed.send('Donor memory');
+  const raw = JSON.stringify(seed.read('stateSnapshot()'));
+  const saved = new Map([['unrelated', 'keep']]);
+  const app = boot(saved, false, true);
+  assert.equal(app.read(`reviewImportText(${JSON.stringify(raw)})`), true);
+  assert.equal(app.read('applyReviewedImport()'), false);
+  assert.equal(app.window.reloaded, undefined);
+  assert.equal(app.read('userHistory.length'), 0);
+  assert.equal(saved.has(key), false);
+  assert.equal(saved.get('unrelated'), 'keep');
 });
 
 test('unrelated input never quotes an earlier private entry', () => {

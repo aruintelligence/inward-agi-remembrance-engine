@@ -29,6 +29,7 @@ It explores a memory-first design question:
 - Threshold-based contraction called Guardian Veto™
 - Client-side operation with no application backend
 - JSON export and local erasure controls for saved entries and the field snapshot
+- Reviewed JSON restore with complete v1 validation, visible incoming entries, and stale-state protection
 
 These are implemented software behaviors inside the prototype. They are not validated measures of a user’s cognition, wellbeing, spirituality, or identity.
 
@@ -50,7 +51,9 @@ On Windows, double-click the HTML file. Some externally hosted visual dependenci
 
 Each interaction saves up to 40 entered remembrance events, the three visible retrieval-ledger labels, and a 720-value field snapshot to this browser's `localStorage`. On reload, the memory and snapshot are restored before the simulation resumes. The chat transcript and animation frames are not saved. If browser storage is blocked or unavailable, the session still works and a JSON copy can still be downloaded. File URL storage behavior varies by browser.
 
-Use **Download JSON** to inspect a snapshot, including your entered text. **Erase local state** removes only this app's saved key after confirmation. The app does not upload entered text; the Tailwind CDN and Google Fonts are external visual dependencies, and browser extensions or other device users may affect local privacy. The export is for inspection; importing it is not implemented.
+Use **Download JSON** to keep a snapshot, including your entered text. To move it to another browser, choose that file under **Move your memory to this browser**, select **Review selected JSON**, inspect the incoming entries and current-memory count, then choose **Replace local state with this file**. Review makes no changes. Restore replaces this app's local memory, retrieval labels, and field snapshot, then reloads. Download the current browser's state before replacing it if you want to retain both copies. **Erase local state** removes only this app's saved key after confirmation.
+
+The importer accepts only complete v1 exports within 256 KB and the app's documented limits: at most 40 memories, three labels, and exactly 720 finite field values. It refuses malformed or clipped files without a partial restore. A new interaction or a changed saved snapshot in another tab invalidates the review. If browser storage cannot be written, restore refuses to proceed. The app does not upload the selected file or entered text; the Tailwind CDN and Google Fonts are external visual dependencies, and browser extensions or other device users may affect local privacy. The JSON file is editable and unencrypted: reviewing it does not prove who created its contents or make it safe to share.
 
 The modeled coherence score starts near 0.999 on a flat, empty field because it is calculated from low spatial variance. That initial value is not earned by memory or evidence of cognition. A submitted input changes the field before the threshold response rule evaluates the new score.
 
@@ -60,7 +63,7 @@ Run the local regression suite with Node.js and Python 3 available:
 node tests/state.test.cjs
 ```
 
-It covers reload and retrieval, unsupported and ambiguous recall, independent Python verification, the initial empty-state label, response gating, damaged or blocked storage, export, and erasure. [The retrieval protocol](RETRIEVAL_PROTOCOL.md) states the exact rule and shows how to recheck an exported state without importing browser code.
+It covers reload and retrieval, unsupported and ambiguous recall, independent Python verification, the initial empty-state label, response gating, malformed and blocked storage, export, reviewed restore, stale review, failed write, and erasure. [The retrieval protocol](RETRIEVAL_PROTOCOL.md) states the exact rule and shows how to recheck an exported state without importing browser code.
 
 ## Conceptual vocabulary
 

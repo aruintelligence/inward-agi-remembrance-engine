@@ -162,6 +162,19 @@
             <button type="button" onclick="exportState()" class="rounded-xl border border-cyan-400/50 px-4 py-2 text-cyan-200">Download JSON</button>
             <button type="button" onclick="eraseState()" class="rounded-xl border border-rose-400/50 px-4 py-2 text-rose-200">Erase local state</button>
           </div>
+          <div class="mt-4 border-t border-white/10 pt-4">
+            <label for="state-file" class="tiny text-cyan-300 block mb-2">Move your memory to this browser</label>
+            <p class="text-slate-400 mb-3">Choose a JSON export from this app. Review its entries before replacing this browser's memory and field. The file stays on this device.</p>
+            <input id="state-file" type="file" accept=".json,application/json" onchange="cancelImportReview('Selection changed. Review the new file before restoring.')" class="block w-full min-w-0 text-slate-200 file:mr-3 file:rounded-lg file:border-0 file:bg-cyan-900 file:px-3 file:py-2 file:text-cyan-100">
+            <button type="button" onclick="reviewImportFile()" class="mt-3 rounded-xl border border-cyan-400/50 px-4 py-2 text-cyan-200">Review selected JSON</button>
+            <p id="import-status" class="mt-3 text-slate-300" role="status" aria-live="polite">No file reviewed.</p>
+            <div id="import-review" hidden class="mt-3 rounded-xl border border-cyan-400/30 bg-black/20 p-3">
+              <p id="import-summary" class="text-slate-200"></p>
+              <p class="mt-2 text-slate-400">Every incoming entry is shown below. The current browser state will be replaced. Download a copy first if you want to keep it.</p>
+              <ol id="import-entries" class="mt-2 max-h-48 overflow-y-auto list-decimal pl-5 text-slate-200 break-words"></ol>
+              <button id="import-commit" type="button" onclick="applyReviewedImport()" class="mt-3 rounded-xl bg-emerald-400 px-4 py-2 font-semibold text-black">Replace local state with this file</button>
+            </div>
+          </div>
         </div>
 
         <div class="glass rounded-[1.7rem] p-5 md:p-6">
@@ -232,6 +245,7 @@
     const MU_BASE = 0.10, MU_MAX = 2.00, COHERENCE_THRESHOLD = 0.64;
     const RELAXATION = 0.068, DIFFUSION = 0.098;
     const STORAGE_KEY = 'aru_remembrance_engine_v11_state';
+    const MAX_IMPORT_BYTES = 256 * 1024;
 
     let mu = new Float32Array(FIELD_WIDTH).fill(MU_BASE);
     let coherence = 0;
@@ -239,6 +253,9 @@
     let memoryTraces = [];
     let ledgerEntries = []; // [{text, ts}]
     let storageAvailable = true;
+    let stateRevision = 0;
+    let importGeneration = 0;
+    let pendingImport = null;
 
     function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
 
@@ -268,6 +285,8 @@
     }
 
     function saveState() {
+      stateRevision++;
+      if (pendingImport) cancelImportReview('Local state changed. Review the file again before restoring.');
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(stateSnapshot()));
         storageAvailable = true;
@@ -317,6 +336,109 @@
       link.click();
       link.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    function cancelImportReview(message = 'No file reviewed.') {
+      importGeneration++;
+      pendingImport = null;
+      document.getElementById('import-review').hidden = true;
+      document.getElementById('import-entries').replaceChildren();
+      document.getElementById('import-status').textContent = message;
+    }
+
+    // Read only the documented v1 export shape. Reject incomplete, oversized,
+    // clipped, or out-of-range snapshots instead of silently restoring a subset.
+    function validateImportedState(raw) {
+      if (new Blob([raw]).size > MAX_IMPORT_BYTES) throw new Error('File exceeds the 256 KB limit.');
+      let value;
+      try { value = JSON.parse(raw); } catch (_) { throw new Error('File is not valid JSON.'); }
+      const object = v => v && typeof v === 'object' && !Array.isArray(v);
+      const keysAre = (v, keys) => object(v) && Object.keys(v).sort().join(',') === [...keys].sort().join(',');
+      if (!keysAre(value, ['schema_version', 'scope', 'saved_at', 'user_history', 'ledger_entries', 'field']) ||
+          value.schema_version !== 1 || value.scope !== 'browser-local symbolic simulation') {
+        throw new Error('File is not a complete Remembrance Engine v1 export.');
+      }
+      if (typeof value.saved_at !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value.saved_at) ||
+          Number.isNaN(Date.parse(value.saved_at))) throw new Error('Export date is invalid.');
+      const validEntry = (e, limit) => keysAre(e, ['text', 'ts']) && typeof e.text === 'string' &&
+        e.text.length > 0 && e.text.length <= limit && Number.isSafeInteger(e.ts) && e.ts >= 0;
+      if (!Array.isArray(value.user_history) || value.user_history.length > 40 ||
+          !value.user_history.every(e => validEntry(e, 2000))) throw new Error('Memory entries are incomplete or exceed their limits.');
+      if (!Array.isArray(value.ledger_entries) || value.ledger_entries.length > 3 ||
+          !value.ledger_entries.every(e => validEntry(e, 29))) throw new Error('Retrieval labels are incomplete or exceed their limits.');
+      if (!Array.isArray(value.field) || value.field.length !== FIELD_WIDTH ||
+          !value.field.every(v => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= MU_MAX)) {
+        throw new Error('Field snapshot is incomplete or out of range.');
+      }
+      // Construct fresh records so imported JSON never supplies runtime objects.
+      return {
+        schema_version: 1, scope: value.scope, saved_at: value.saved_at,
+        user_history: value.user_history.map(({text, ts}) => ({text, ts})),
+        ledger_entries: value.ledger_entries.map(({text, ts}) => ({text, ts})),
+        field: value.field.slice()
+      };
+    }
+
+    function reviewImportText(raw, name = 'selected file') {
+      cancelImportReview('Checking file…');
+      let state, previousRaw;
+      try {
+        state = validateImportedState(raw);
+        previousRaw = localStorage.getItem(STORAGE_KEY);
+      } catch (error) {
+        document.getElementById('import-status').textContent = `Restore refused: ${error instanceof Error ? error.message : 'Browser storage is unavailable.'}`;
+        return false;
+      }
+      pendingImport = {state, previousRaw, revision: stateRevision};
+      const list = document.getElementById('import-entries');
+      for (const entry of state.user_history) {
+        const item = document.createElement('li');
+        item.textContent = entry.text;
+        list.appendChild(item);
+      }
+      document.getElementById('import-summary').textContent =
+        `${name}: ${state.user_history.length} incoming memories, ${state.ledger_entries.length} retrieval labels (${state.ledger_entries.map(e => e.text).join('; ') || 'none'}), ${state.field.length} field values; saved ${state.saved_at}. Current browser: ${userHistory.length} memories. No changes made yet.`;
+      document.getElementById('import-review').hidden = false;
+      document.getElementById('import-status').textContent = 'Review complete. Restore only if you trust this file and want to replace the current state.';
+      return true;
+    }
+
+    async function reviewImportFile() {
+      const file = document.getElementById('state-file').files?.[0];
+      cancelImportReview(file ? 'Reading selected file…' : 'Choose a JSON file first.');
+      if (!file) return;
+      if (file.size > MAX_IMPORT_BYTES) {
+        document.getElementById('import-status').textContent = 'Restore refused: file exceeds the 256 KB limit.';
+        return;
+      }
+      const generation = importGeneration;
+      const revision = stateRevision;
+      try {
+        const raw = await file.text();
+        if (generation !== importGeneration || revision !== stateRevision ||
+            document.getElementById('state-file').files?.[0] !== file) return;
+        reviewImportText(raw, file.name);
+      } catch (_) {
+        if (generation === importGeneration) document.getElementById('import-status').textContent = 'Could not read the selected file.';
+      }
+    }
+
+    function applyReviewedImport() {
+      if (!pendingImport) return false;
+      const {state, previousRaw, revision} = pendingImport;
+      try {
+        if (revision !== stateRevision || localStorage.getItem(STORAGE_KEY) !== previousRaw) {
+          cancelImportReview('Local state changed in this browser or another tab. Review the file again.');
+          return false;
+        }
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      } catch (_) {
+        cancelImportReview('Restore refused: browser storage is unavailable. Current state was not replaced.');
+        return false;
+      }
+      cancelImportReview('Restore saved. Reloading…');
+      window.location.reload();
+      return true;
     }
 
     function eraseState() {
