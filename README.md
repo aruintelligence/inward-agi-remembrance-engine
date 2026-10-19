@@ -30,6 +30,7 @@ It explores a memory-first design question:
 - Client-side operation with no application backend
 - JSON export and local erasure controls for saved entries and the field snapshot
 - Reviewed JSON restore with complete v1 validation, visible incoming entries, and stale-state protection
+- A selective merge that shows current and incoming sources, detects exact duplicates, and blocks over-capacity plans
 
 These are implemented software behaviors inside the prototype. They are not validated measures of a user’s cognition, wellbeing, spirituality, or identity.
 
@@ -53,6 +54,8 @@ Each interaction saves up to 40 entered remembrance events, the three visible re
 
 Use **Download JSON** to keep a snapshot, including your entered text. To move it to another browser, choose that file under **Move your memory to this browser**, select **Review selected JSON**, inspect the incoming entries and current-memory count, then choose **Replace local state with this file**. Review makes no changes. Restore replaces this app's local memory, retrieval labels, and field snapshot, then reloads. Download the current browser's state before replacing it if you want to retain both copies. **Erase local state** removes only this app's saved key after confirmation.
 
+To combine memory histories instead, use **Select current**, **Select incoming**, or the checkboxes, then **Merge selected memories**. The page lists every distinct text-and-timestamp pair with its source. An exact pair in both copies appears once; the same text with a different timestamp remains a separate event. A plan above 40 selected memories cannot be saved, and unchecked events are counted as excluded. Merge keeps the current browser's field and retrieval labels as captured when you reviewed the file; it adds only the selected history entries, sorted by their recorded timestamps. Those timestamps are editable and depend on device clocks, so the order is a display convention, not proof of when an event happened. The import file and existing browser state remain untouched until the final save. A successful save reloads the app; it does not create an undo copy, so download your current state before committing if you may need it later.
+
 The importer accepts only complete v1 exports within 256 KB and the app's documented limits: at most 40 memories, three labels, and exactly 720 finite field values. It refuses malformed or clipped files without a partial restore. A new interaction or a changed saved snapshot in another tab invalidates the review. If browser storage cannot be written, restore refuses to proceed. The app does not upload the selected file or entered text; the Tailwind CDN and Google Fonts are external visual dependencies, and browser extensions or other device users may affect local privacy. The JSON file is editable and unencrypted: reviewing it does not prove who created its contents or make it safe to share.
 
 The modeled coherence score starts near 0.999 on a flat, empty field because it is calculated from low spatial variance. That initial value is not earned by memory or evidence of cognition. A submitted input changes the field before the threshold response rule evaluates the new score.
@@ -63,7 +66,7 @@ Run the local regression suite with Node.js and Python 3 available:
 node tests/state.test.cjs
 ```
 
-It covers reload and retrieval, unsupported and ambiguous recall, independent Python verification, the initial empty-state label, response gating, malformed and blocked storage, export, reviewed restore, stale review, failed write, and erasure. [The retrieval protocol](RETRIEVAL_PROTOCOL.md) states the exact rule and shows how to recheck an exported state without importing browser code.
+It covers reload and retrieval, unsupported and ambiguous recall, independent Python verification, the initial empty-state label, response gating, malformed and blocked storage, export, reviewed restore, selective merge, deduplication, capacity refusal, stale review, failed write, and erasure. [The retrieval protocol](RETRIEVAL_PROTOCOL.md) states the exact rule and shows how to recheck an exported state without importing browser code.
 
 ## Conceptual vocabulary
 

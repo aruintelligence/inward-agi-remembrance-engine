@@ -164,15 +164,27 @@
           </div>
           <div class="mt-4 border-t border-white/10 pt-4">
             <label for="state-file" class="tiny text-cyan-300 block mb-2">Move your memory to this browser</label>
-            <p class="text-slate-400 mb-3">Choose a JSON export from this app. Review its entries before replacing this browser's memory and field. The file stays on this device.</p>
+            <p class="text-slate-400 mb-3">Choose a JSON export from this app. Review its entries, then replace this browser's state or select memories to combine. The file stays on this device.</p>
             <input id="state-file" type="file" accept=".json,application/json" onchange="cancelImportReview('Selection changed. Review the new file before restoring.')" class="block w-full min-w-0 text-slate-200 file:mr-3 file:rounded-lg file:border-0 file:bg-cyan-900 file:px-3 file:py-2 file:text-cyan-100">
             <button type="button" onclick="reviewImportFile()" class="mt-3 rounded-xl border border-cyan-400/50 px-4 py-2 text-cyan-200">Review selected JSON</button>
             <p id="import-status" class="mt-3 text-slate-300" role="status" aria-live="polite">No file reviewed.</p>
             <div id="import-review" hidden class="mt-3 rounded-xl border border-cyan-400/30 bg-black/20 p-3">
               <p id="import-summary" class="text-slate-200"></p>
-              <p class="mt-2 text-slate-400">Every incoming entry is shown below. The current browser state will be replaced. Download a copy first if you want to keep it.</p>
+              <p class="mt-2 text-slate-400">Every incoming entry is shown below. Replacement uses the complete file. Download the current browser's state first if you want a copy.</p>
               <ol id="import-entries" class="mt-2 max-h-48 overflow-y-auto list-decimal pl-5 text-slate-200 break-words"></ol>
               <button id="import-commit" type="button" onclick="applyReviewedImport()" class="mt-3 rounded-xl bg-emerald-400 px-4 py-2 font-semibold text-black">Replace local state with this file</button>
+              <div class="mt-4 border-t border-white/10 pt-4">
+                <div class="tiny text-cyan-300 mb-2">Or combine selected memories</div>
+                <p class="text-slate-400">Merge keeps this browser's field and retrieval labels at the time of review. Identical text and timestamp pairs appear once. Select up to 40 memories; unchecked entries are excluded.</p>
+                <div class="flex flex-wrap gap-2 mt-3">
+                  <button type="button" onclick="selectMergeSource('current')" class="rounded-lg border border-white/20 px-3 py-1 text-slate-200">Select current</button>
+                  <button type="button" onclick="selectMergeSource('incoming')" class="rounded-lg border border-white/20 px-3 py-1 text-slate-200">Select incoming</button>
+                  <button type="button" onclick="selectMergeSource('all')" class="rounded-lg border border-white/20 px-3 py-1 text-slate-200">Select all</button>
+                </div>
+                <p id="merge-count" class="mt-3 text-slate-200" role="status" aria-live="polite"></p>
+                <ul id="merge-entries" class="mt-2 max-h-56 overflow-y-auto space-y-2 text-slate-200 break-words"></ul>
+                <button id="merge-commit" type="button" onclick="applyReviewedImport('merge')" disabled class="mt-3 rounded-xl bg-cyan-300 px-4 py-2 font-semibold text-black disabled:cursor-not-allowed disabled:opacity-40">Merge selected memories</button>
+              </div>
             </div>
           </div>
         </div>
@@ -343,6 +355,8 @@
       pendingImport = null;
       document.getElementById('import-review').hidden = true;
       document.getElementById('import-entries').replaceChildren();
+      document.getElementById('merge-entries').replaceChildren();
+      document.getElementById('merge-commit').disabled = true;
       document.getElementById('import-status').textContent = message;
     }
 
@@ -379,17 +393,83 @@
       };
     }
 
+    function mergeCandidates(current, incoming) {
+      const seen = new Map();
+      const candidates = [];
+      for (const [source, entries] of [['current', current], ['incoming', incoming]]) {
+        for (const entry of entries) {
+          const key = JSON.stringify([entry.text, entry.ts]);
+          if (seen.has(key)) {
+            if (!seen.get(key).sources.includes(source)) seen.get(key).sources.push(source);
+          } else {
+            const candidate = {text: entry.text, ts: entry.ts, sources: [source]};
+            seen.set(key, candidate);
+            candidates.push(candidate);
+          }
+        }
+      }
+      return candidates;
+    }
+
+    function mergeSelection() {
+      if (!pendingImport) return [];
+      const controls = document.getElementById('merge-entries').children;
+      return pendingImport.candidates.filter((_, index) => controls[index].children[0].children[0].checked);
+    }
+
+    function updateMergeSelection() {
+      const selected = mergeSelection().length;
+      const total = pendingImport?.candidates.length || 0;
+      document.getElementById('merge-count').textContent =
+        `${selected} selected of ${total} distinct memories; ${total - selected} excluded. ${selected > 40 ? 'Select 40 or fewer to merge.' : selected === 0 ? 'Select at least one to merge.' : 'Ready to merge.'}`;
+      document.getElementById('merge-commit').disabled = !pendingImport || selected === 0 || selected > 40;
+    }
+
+    function selectMergeSource(source) {
+      if (!pendingImport) return;
+      const controls = document.getElementById('merge-entries').children;
+      pendingImport.candidates.forEach((candidate, index) => {
+        controls[index].children[0].children[0].checked = source === 'all' || candidate.sources.includes(source);
+      });
+      updateMergeSelection();
+    }
+
+    function renderMergeChoices() {
+      const list = document.getElementById('merge-entries');
+      pendingImport.candidates.forEach(candidate => {
+        const item = document.createElement('li');
+        const label = document.createElement('label');
+        label.className = 'flex gap-2 items-start rounded-lg bg-white/5 p-2';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = true;
+        checkbox.className = 'mt-1 accent-cyan-300';
+        checkbox.addEventListener('change', updateMergeSelection);
+        const detail = document.createElement('span');
+        const date = new Date(candidate.ts);
+        const when = Number.isFinite(date.getTime()) ? date.toLocaleString() : 'Unrenderable date';
+        detail.textContent = `${candidate.sources.join(' + ')} · ${when} (${candidate.ts} ms): ${candidate.text}`;
+        label.appendChild(checkbox);
+        label.appendChild(detail);
+        item.appendChild(label);
+        list.appendChild(item);
+      });
+      updateMergeSelection();
+    }
+
     function reviewImportText(raw, name = 'selected file') {
       cancelImportReview('Checking file…');
-      let state, previousRaw;
+      let state, previousRaw, current;
       try {
         state = validateImportedState(raw);
         previousRaw = localStorage.getItem(STORAGE_KEY);
+        current = stateSnapshot();
       } catch (error) {
         document.getElementById('import-status').textContent = `Restore refused: ${error instanceof Error ? error.message : 'Browser storage is unavailable.'}`;
         return false;
       }
-      pendingImport = {state, previousRaw, revision: stateRevision};
+      pendingImport = {state, previousRaw, current, revision: stateRevision,
+        candidates: mergeCandidates(current.user_history, state.user_history)};
       const list = document.getElementById('import-entries');
       for (const entry of state.user_history) {
         const item = document.createElement('li');
@@ -398,8 +478,9 @@
       }
       document.getElementById('import-summary').textContent =
         `${name}: ${state.user_history.length} incoming memories, ${state.ledger_entries.length} retrieval labels (${state.ledger_entries.map(e => e.text).join('; ') || 'none'}), ${state.field.length} field values; saved ${state.saved_at}. Current browser: ${userHistory.length} memories. No changes made yet.`;
+      renderMergeChoices();
       document.getElementById('import-review').hidden = false;
-      document.getElementById('import-status').textContent = 'Review complete. Restore only if you trust this file and want to replace the current state.';
+      document.getElementById('import-status').textContent = 'Review complete. Choose replacement or an explicit merge selection.';
       return true;
     }
 
@@ -423,15 +504,28 @@
       }
     }
 
-    function applyReviewedImport() {
+    function applyReviewedImport(mode = 'replace') {
       if (!pendingImport) return false;
-      const {state, previousRaw, revision} = pendingImport;
+      const {state, current, previousRaw, revision} = pendingImport;
+      if (mode !== 'replace' && mode !== 'merge') return false;
+      let next = state;
+      if (mode === 'merge') {
+        const selected = mergeSelection();
+        if (selected.length === 0 || selected.length > 40) {
+          updateMergeSelection();
+          return false;
+        }
+        // Recorded timestamps give a repeatable order. Imported timestamps are
+        // user-editable and do not establish authentic chronology.
+        next = {...current, saved_at: new Date().toISOString(),
+          user_history: selected.map(({text, ts}) => ({text, ts})).sort((a, b) => a.ts - b.ts)};
+      }
       try {
         if (revision !== stateRevision || localStorage.getItem(STORAGE_KEY) !== previousRaw) {
           cancelImportReview('Local state changed in this browser or another tab. Review the file again.');
           return false;
         }
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
       } catch (_) {
         cancelImportReview('Restore refused: browser storage is unavailable. Current state was not replaced.');
         return false;

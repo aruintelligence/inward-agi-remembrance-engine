@@ -220,6 +220,78 @@ test('failed storage write leaves the existing memory untouched', () => {
   assert.equal(saved.get('unrelated'), 'keep');
 });
 
+test('merge deduplicates exact events, preserves distinct repeats and current field, and restores selected history', () => {
+  const app = boot();
+  app.send('Shared memory');
+  app.send('Current-only memory');
+  const current = JSON.parse(app.saved.get(key));
+  const incoming = {
+    ...current,
+    user_history: [current.user_history[0], {text: 'Shared memory', ts: current.user_history[0].ts + 1000},
+      {text: 'Imported-only memory', ts: current.user_history[0].ts + 2000}],
+    ledger_entries: [{text: 'Imported label', ts: 1}],
+    field: Array(720).fill(1.5)
+  };
+  const before = app.saved.get(key);
+  assert.equal(app.read(`reviewImportText(${JSON.stringify(JSON.stringify(incoming))})`), true);
+  assert.equal(app.saved.get(key), before);
+  assert.equal(app.read('pendingImport.candidates.length'), 4);
+  assert.match(app.elements.get('merge-count').textContent, /4 selected of 4 distinct/);
+  assert.equal(app.elements.get('merge-entries').children[0].children[0].children[1].textContent.includes('current + incoming'), true);
+  assert.equal(app.read("applyReviewedImport('merge')"), true);
+  assert.equal(app.window.reloaded, true);
+  const merged = JSON.parse(app.saved.get(key));
+  assert.equal(merged.user_history.length, 4);
+  assert.equal(merged.user_history.filter(e => e.text === 'Shared memory').length, 2);
+  assert.deepEqual(merged.user_history.map(e => e.ts), [...merged.user_history.map(e => e.ts)].sort((a, b) => a - b));
+  assert.deepEqual(merged.field, current.field);
+  assert.deepEqual(merged.ledger_entries, current.ledger_entries);
+  const restored = boot(app.saved);
+  assert.equal(restored.read('userHistory.length'), 4);
+});
+
+test('a merge over 40 remains blocked until the user chooses every included memory', () => {
+  const app = boot();
+  app.read('userHistory = Array.from({length: 30}, (_, i) => ({text: `Current ${i}`, ts: 1000 + i, tokens: []})); saveState()');
+  const before = app.saved.get(key);
+  const incoming = JSON.parse(before);
+  incoming.user_history = Array.from({length: 30}, (_, i) => ({text: `Incoming ${i}`, ts: 2000 + i}));
+  assert.equal(app.read(`reviewImportText(${JSON.stringify(JSON.stringify(incoming))})`), true);
+  assert.match(app.elements.get('merge-count').textContent, /60 selected of 60 distinct memories; 0 excluded/);
+  assert.equal(app.elements.get('merge-commit').disabled, true);
+  assert.equal(app.read("applyReviewedImport('merge')"), false);
+  assert.equal(app.saved.get(key), before);
+
+  app.read("selectMergeSource('incoming')");
+  assert.match(app.elements.get('merge-count').textContent, /30 selected of 60 distinct memories; 30 excluded/);
+  for (let i = 0; i < 10; i++) app.elements.get('merge-entries').children[i].children[0].children[0].checked = true;
+  app.read('updateMergeSelection()');
+  assert.match(app.elements.get('merge-count').textContent, /40 selected of 60 distinct memories; 20 excluded/);
+  assert.equal(app.elements.get('merge-commit').disabled, false);
+  assert.equal(app.saved.get(key), before);
+  assert.equal(app.read("applyReviewedImport('merge')"), true);
+  const selected = JSON.parse(app.saved.get(key)).user_history.map(e => e.text);
+  assert.deepEqual(selected, [
+    ...Array.from({length: 10}, (_, i) => `Current ${i}`),
+    ...Array.from({length: 30}, (_, i) => `Incoming ${i}`)
+  ]);
+  assert.equal(boot(app.saved).read('userHistory.length'), 40);
+});
+
+test('merge rechecks storage after selection and refuses a stale review', () => {
+  const app = boot();
+  app.send('Current memory');
+  const incoming = JSON.parse(app.saved.get(key));
+  incoming.user_history = [{text: 'Incoming memory', ts: 1}];
+  assert.equal(app.read(`reviewImportText(${JSON.stringify(JSON.stringify(incoming))})`), true);
+  app.read("selectMergeSource('incoming')");
+  const changed = {...JSON.parse(app.saved.get(key)), saved_at: '2026-01-01T00:00:00.000Z'};
+  app.saved.set(key, JSON.stringify(changed));
+  assert.equal(app.read("applyReviewedImport('merge')"), false);
+  assert.deepEqual(JSON.parse(app.saved.get(key)), changed);
+  assert.equal(app.elements.get('import-review').hidden, true);
+});
+
 test('unrelated input never quotes an earlier private entry', () => {
   const app = boot();
   app.send('My private Portland account is blue');
