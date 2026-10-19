@@ -136,7 +136,7 @@ test('a stale removal review and failed storage write cannot discard existing me
   assert.equal(app.elements.get('forget-review').hidden, true);
 
   assert.equal(app.read('reviewForget(0)'), true);
-  const competing = JSON.stringify({...JSON.parse(updated), saved_at: new Date().toISOString()});
+  const competing = JSON.stringify({...JSON.parse(updated), saved_at: '2000-01-01T00:00:00.000Z'});
   app.saved.set(key, competing);
   assert.equal(await app.read('commitForgottenMemory()'), false);
   assert.equal(app.saved.get(key), competing);
