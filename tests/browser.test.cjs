@@ -91,7 +91,7 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       assert.doesNotMatch(downloaded, /Corvallis sunrise|A second private/);
 
       await page.getByText('Review and remove saved memories').click();
-      await page.getByRole('button', {name: 'Review removal of memory 1'}).click();
+      await page.getByRole('button', {name: 'Review removal of memory 1', exact: true}).click();
       assert.equal(await page.locator('#forget-preview').textContent(), 'Corvallis sunrise belongs to this vault');
       const beforeRemoval = await page.evaluate(key => localStorage.getItem(key), storageKey);
       await page.locator('#input').fill('Vault draft waiting for a space');
@@ -123,7 +123,7 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       assert.equal(await receivingPage.locator('#memory-depth').textContent(), '2');
       assert.equal(JSON.parse(await receivingPage.evaluate(key => localStorage.getItem(key), storageKey)).user_history.length, 2);
       await receivingPage.getByText('Review and remove saved memories').click();
-      await receivingPage.getByRole('button', {name: 'Review removal of memory 1'}).click();
+      await receivingPage.getByRole('button', {name: 'Review removal of memory 1', exact: true}).click();
       await receivingPage.getByRole('button', {name: 'Remove this saved entry'}).click();
       await receivingPage.locator('#memory-depth').filter({hasText: /^1$/}).waitFor();
       const remaining = JSON.parse(await receivingPage.evaluate(key => localStorage.getItem(key), storageKey));
@@ -145,7 +145,7 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       assert.equal(await receivingPage.evaluate(key => localStorage.getItem(key), storageKey), fullSnapshot);
       await receivingPage.getByRole('button', {name: 'Manage memories'}).click();
       assert.equal(await receivingPage.locator('#memory-control').evaluate(el => el.open), true);
-      await receivingPage.getByRole('button', {name: 'Review removal of memory 1'}).click();
+      await receivingPage.getByRole('button', {name: 'Review removal of memory 1', exact: true}).click();
       await receivingPage.getByRole('button', {name: 'Remove this saved entry'}).click();
       await receivingPage.locator('#memory-depth').filter({hasText: /^39$/}).waitFor();
       assert.equal(await receivingPage.locator('#input').inputValue(), 'The forty-first browser draft');
