@@ -12,4 +12,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: node tests/state.test.cjs
+      - run: npm ci --ignore-scripts
+      - run: npm run build:styles
+      - run: git diff --exit-code -- inward-agi-remembrance-engine-v11.html
+      - run: npm test

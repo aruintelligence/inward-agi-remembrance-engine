@@ -5,6 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const os = require('node:os');
 const { spawnSync } = require('node:child_process');
+const { webcrypto, pbkdf2Sync, createDecipheriv } = require('node:crypto');
 
 const html = fs.readFileSync(path.join(__dirname, '..', 'inward-agi-remembrance-engine-v11.html'), 'utf8');
 const source = html.match(/<script>([\s\S]*?)<\/script>/)[1];
@@ -47,7 +48,8 @@ function boot(saved = new Map(), storageBlocked = false, storageWriteBlocked = f
     location: { reload() { window.reloaded = true; } }
   };
   const context = vm.createContext({
-    document, localStorage, window, Blob, console,
+    document, localStorage, window, Blob, console, crypto: webcrypto,
+    TextEncoder, TextDecoder, btoa, atob,
     URL: { createObjectURL(blob) { exports.push(blob); return 'blob:export'; }, revokeObjectURL() {} },
     requestAnimationFrame() {}, setTimeout(callback) { callback(); },
     performance: { now() { return 0; } }
@@ -114,6 +116,139 @@ test('export includes text and erasure removes only the app state', async () => 
   assert.equal(app.window.reloaded, true);
   assert.equal(app.saved.get('unrelated'), 'keep');
   assert.equal(app.saved.has(key), false);
+});
+
+test('encrypted export is private, randomized, independently decryptable, and reviewed before restore', async () => {
+  const donor = boot();
+  donor.send('A private café memory');
+  const passphrase = 'a long unique café passphrase 🗝️';
+  const password = donor.context.document.getElementById('export-passphrase');
+  const confirm = donor.context.document.getElementById('export-confirm');
+  password.value = passphrase;
+  confirm.value = passphrase;
+  await donor.read('exportEncryptedState()');
+  assert.equal(password.value, '');
+  assert.equal(confirm.value, '');
+  assert.equal(donor.exports.length, 1);
+  const raw = await donor.exports[0].text();
+  assert.doesNotMatch(raw, /private café memory/);
+  const envelope = JSON.parse(raw);
+  assert.deepEqual(Object.keys(envelope).sort(), ['ciphertext', 'format', 'iterations', 'iv', 'salt']);
+  assert.equal(envelope.format, 'aru-remembrance-encrypted-v1');
+  assert.equal(envelope.iterations, 600000);
+
+  // Use Node's independent PBKDF2/AES-GCM implementation, not the app's decryptor.
+  const salt = Buffer.from(envelope.salt, 'base64');
+  const iv = Buffer.from(envelope.iv, 'base64');
+  const sealed = Buffer.from(envelope.ciphertext, 'base64');
+  const keyBytes = pbkdf2Sync(passphrase.normalize('NFC'), salt, envelope.iterations, 32, 'sha256');
+  const decipher = createDecipheriv('aes-256-gcm', keyBytes, iv);
+  decipher.setAAD(Buffer.from(envelope.format));
+  decipher.setAuthTag(sealed.subarray(-16));
+  const decoded = Buffer.concat([decipher.update(sealed.subarray(0, -16)), decipher.final()]);
+  assert.equal(JSON.parse(decoded.toString()).user_history[0].text, 'A private café memory');
+
+  password.value = passphrase;
+  confirm.value = passphrase;
+  await donor.read('exportEncryptedState()');
+  const second = JSON.parse(await donor.exports[1].text());
+  assert.notEqual(second.salt, envelope.salt);
+  assert.notEqual(second.iv, envelope.iv);
+  assert.notEqual(second.ciphertext, envelope.ciphertext);
+
+  const saved = new Map();
+  const receiver = boot(saved);
+  receiver.send('Keep until approved');
+  const before = saved.get(key);
+  receiver.context.document.getElementById('state-file').files = [{
+    name: 'encrypted.json', size: new Blob([raw]).size, text: async () => raw
+  }];
+  receiver.context.document.getElementById('import-passphrase').value = passphrase.normalize('NFD');
+  await receiver.read('reviewImportFile()');
+  assert.equal(receiver.elements.get('import-passphrase').value, '');
+  assert.equal(saved.get(key), before);
+  assert.match(receiver.elements.get('import-summary').textContent, /1 incoming memories/);
+  assert.equal(receiver.read('applyReviewedImport()'), true);
+  assert.equal(boot(saved).read('userHistory[0].text'), 'A private café memory');
+});
+
+test('wrong passphrase, tampering, and malformed encrypted files never replace state', async () => {
+  const donor = boot();
+  donor.send('Do not reveal this memory');
+  donor.context.document.getElementById('export-passphrase').value = 'a sufficiently long password';
+  donor.context.document.getElementById('export-confirm').value = 'a sufficiently long password';
+  await donor.read('exportEncryptedState()');
+  const original = JSON.parse(await donor.exports[0].text());
+
+  const app = boot();
+  app.send('Keep existing memory');
+  const before = app.saved.get(key);
+  const file = app.context.document.getElementById('state-file');
+  const importPassword = app.context.document.getElementById('import-passphrase');
+  async function attempt(data, passphrase) {
+    const raw = JSON.stringify(data);
+    file.files = [{name: 'encrypted.json', size: new Blob([raw]).size, text: async () => raw}];
+    importPassword.value = passphrase;
+    await app.read('reviewImportFile()');
+    assert.equal(importPassword.value, '');
+    assert.equal(app.read('pendingImport'), null);
+    assert.equal(app.read('applyReviewedImport()'), false);
+    assert.equal(app.saved.get(key), before);
+    assert.equal(app.elements.get('import-review').hidden, true);
+  }
+  await attempt(original, 'wrong but sufficiently long');
+  assert.match(app.elements.get('import-status').textContent, /Wrong passphrase or damaged/);
+  const bytes = Buffer.from(original.ciphertext, 'base64');
+  bytes[0] ^= 1;
+  await attempt({...original, ciphertext: bytes.toString('base64')}, 'a sufficiently long password');
+  assert.match(app.elements.get('import-status').textContent, /Wrong passphrase or damaged/);
+  await attempt({...original, iterations: 1}, 'a sufficiently long password');
+  assert.match(app.elements.get('import-status').textContent, /format is invalid/);
+  await attempt({...original, salt: '@invalid'}, 'a sufficiently long password');
+  assert.match(app.elements.get('import-status').textContent, /format is invalid/);
+
+  file.files = [{name: 'oversize.json', size: 512 * 1024 + 1}];
+  importPassword.value = 'a sufficiently long password';
+  await app.read('reviewImportFile()');
+  assert.equal(importPassword.value, '');
+  assert.equal(app.saved.get(key), before);
+});
+
+test('an interaction during encrypted decoding invalidates the pending review', async () => {
+  const app = boot();
+  const raw = JSON.stringify(app.read('stateSnapshot()'));
+  app.context.document.getElementById('state-file').files = [{name: 'delayed.json', size: 100, text: async () => raw}];
+  let signalDecode;
+  const decoding = new Promise(resolve => { signalDecode = resolve; });
+  app.context.signalDecode = signalDecode;
+  app.read('decodeImportText = () => { signalDecode(); return new Promise(resolve => { globalThis.finishDecode = resolve; }); }');
+  const reviewing = app.read('reviewImportFile()');
+  await decoding;
+  app.send('Newer local memory');
+  const before = app.saved.get(key);
+  app.context.finishDecode(raw);
+  await reviewing;
+  assert.equal(app.read('pendingImport'), null);
+  assert.equal(app.saved.get(key), before);
+});
+
+test('the deliverable has self-contained styles and no remote runtime asset', () => {
+  assert.match(html, /<style id="tailwind-generated">[\s\S]*?\.rounded-xl/);
+  assert.match(html, /Content-Security-Policy[^>]*connect-src 'none'[^>]*object-src 'none'/);
+  const withoutGeneratedStyle = html.replace(/<style id="tailwind-generated">[\s\S]*?<\/style>/, '');
+  assert.doesNotMatch(withoutGeneratedStyle, /<script\s+src=|<link\s+[^>]*href=|@import|url\(https?:|<iframe\b/);
+});
+
+test('missing Web Crypto refuses encrypted download without a plaintext fallback', async () => {
+  const app = boot();
+  app.send('Private text');
+  app.context.crypto = undefined;
+  app.context.document.getElementById('export-passphrase').value = 'a sufficiently long password';
+  app.context.document.getElementById('export-confirm').value = 'a sufficiently long password';
+  await app.read('exportEncryptedState()');
+  assert.equal(app.exports.length, 0);
+  assert.match(app.elements.get('crypto-status').textContent, /secure browser context/);
+  assert.equal(app.elements.get('export-passphrase').value, '');
 });
 
 test('reviewed transfer restores the exact exported memory and field after explicit acceptance', async () => {

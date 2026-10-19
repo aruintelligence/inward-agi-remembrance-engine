@@ -28,9 +28,10 @@ It explores a memory-first design question:
 - A modeled coherence value derived from internal field state
 - Threshold-based contraction called Guardian Veto™
 - Client-side operation with no application backend
-- JSON export and local erasure controls for saved entries and the field snapshot
+- Unencrypted JSON export, optional passphrase-encrypted portable copy, and local erasure controls
 - Reviewed JSON restore with complete v1 validation, visible incoming entries, and stale-state protection
 - A selective merge that shows current and incoming sources, detects exact duplicates, and blocks over-capacity plans
+- Bundled styles and a restrictive Content Security Policy; the app loads no remote runtime assets
 
 These are implemented software behaviors inside the prototype. They are not validated measures of a user’s cognition, wellbeing, spirituality, or identity.
 
@@ -46,27 +47,41 @@ cd inward-agi-remembrance-engine
 open inward-agi-remembrance-engine-v11.html
 ```
 
-On Windows, double-click the HTML file. Some externally hosted visual dependencies may require a network connection on first load.
+On Windows, double-click the HTML file. The committed HTML includes its styles and scripts, so it can open without a network connection. Web Crypto availability for encrypted transfers depends on the browser's secure-context rules for local files; use `localhost` if your browser disables it for `file:` pages.
 
 ## Saved state and inspection
 
 Each interaction saves up to 40 entered remembrance events, the three visible retrieval-ledger labels, and a 720-value field snapshot to this browser's `localStorage`. On reload, the memory and snapshot are restored before the simulation resumes. The chat transcript and animation frames are not saved. If browser storage is blocked or unavailable, the session still works and a JSON copy can still be downloaded. File URL storage behavior varies by browser.
 
-Use **Download JSON** to keep a snapshot, including your entered text. To move it to another browser, choose that file under **Move your memory to this browser**, select **Review selected JSON**, inspect the incoming entries and current-memory count, then choose **Replace local state with this file**. Review makes no changes. Restore replaces this app's local memory, retrieval labels, and field snapshot, then reloads. Download the current browser's state before replacing it if you want to retain both copies. **Erase local state** removes only this app's saved key after confirmation.
+Use **Download unencrypted JSON** to keep a readable snapshot, including your entered text. For a portable copy protected by a passphrase, enter and confirm a unique passphrase of 16–1024 characters and choose **Download encrypted JSON**. Keep the passphrase separately: this app cannot recover it. The passphrase fields are cleared after each attempt. Encryption protects only the downloaded file; this browser's saved `localStorage` remains readable to this browser profile and to anyone with access to it. An existing unencrypted download also remains unencrypted.
+
+To move either file to another browser, choose it under **Move your memory to this browser**, enter the passphrase if encrypted, select **Review selected JSON**, inspect the incoming entries and current-memory count, then choose **Replace local state with this file**. Review makes no changes. Restore replaces this app's local memory, retrieval labels, and field snapshot, then reloads. Download the current browser's state before replacing it if you want to retain both copies. **Erase local state** removes only this app's saved key after confirmation.
 
 To combine memory histories instead, use **Select current**, **Select incoming**, or the checkboxes, then **Merge selected memories**. The page lists every distinct text-and-timestamp pair with its source. An exact pair in both copies appears once; the same text with a different timestamp remains a separate event. A plan above 40 selected memories cannot be saved, and unchecked events are counted as excluded. Merge keeps the current browser's field and retrieval labels as captured when you reviewed the file; it adds only the selected history entries, sorted by their recorded timestamps. Those timestamps are editable and depend on device clocks, so the order is a display convention, not proof of when an event happened. The import file and existing browser state remain untouched until the final save. A successful save reloads the app; it does not create an undo copy, so download your current state before committing if you may need it later.
 
-The importer accepts only complete v1 exports within 256 KB and the app's documented limits: at most 40 memories, three labels, and exactly 720 finite field values. It refuses malformed or clipped files without a partial restore. A new interaction or a changed saved snapshot in another tab invalidates the review. If browser storage cannot be written, restore refuses to proceed. The app does not upload the selected file or entered text; the Tailwind CDN and Google Fonts are external visual dependencies, and browser extensions or other device users may affect local privacy. The JSON file is editable and unencrypted: reviewing it does not prove who created its contents or make it safe to share.
+The importer accepts complete v1 state exports within 256 KB, directly or inside an encrypted envelope of at most 512 KB, and the app's documented limits: at most 40 memories, three labels, and exactly 720 finite field values. It refuses malformed or clipped files without a partial restore. A new interaction or a changed saved snapshot in another tab invalidates the review, including during decryption. If browser storage cannot be written, restore refuses to proceed. The app does not upload the selected file or entered text and does not load remote scripts, fonts, or styles. Browser extensions or other device users may affect local privacy. Review does not prove who created a file or whether its contents are true.
+
+Encrypted exports use the `aru-remembrance-encrypted-v1` envelope. It records the format, 600,000 PBKDF2-HMAC-SHA-256 iterations, a random 16-byte salt, a random 12-byte IV, and AES-256-GCM ciphertext with a 128-bit authentication tag. The format string is authenticated as associated data. A new salt and IV are generated for every export; decryption rejects a wrong passphrase or modified ciphertext before showing any review. The envelope metadata and file size remain visible. A weak or reused passphrase is vulnerable to offline guessing by anyone who obtains the file. This is a portable-copy protection feature, not a claim of verified sender identity or whole-device encryption.
 
 The modeled coherence score starts near 0.999 on a flat, empty field because it is calculated from low spatial variance. That initial value is not earned by memory or evidence of cognition. A submitted input changes the field before the threshold response rule evaluates the new score.
 
-Run the local regression suite with Node.js and Python 3 available:
+Run the local regression suite with Node.js 22 and Python 3 available:
 
 ```bash
 node tests/state.test.cjs
 ```
 
-It covers reload and retrieval, unsupported and ambiguous recall, independent Python verification, the initial empty-state label, response gating, malformed and blocked storage, export, reviewed restore, selective merge, deduplication, capacity refusal, stale review, failed write, and erasure. [The retrieval protocol](RETRIEVAL_PROTOCOL.md) states the exact rule and shows how to recheck an exported state without importing browser code.
+It covers reload and retrieval, unsupported and ambiguous recall, independent Python verification, the initial empty-state label, response gating, malformed and blocked storage, both export formats, independent decryption, wrong passphrases, tampering, reviewed restore, selective merge, deduplication, capacity refusal, stale review, failed write, and erasure. [The retrieval protocol](RETRIEVAL_PROTOCOL.md) states the exact rule and shows how to recheck an unencrypted exported state without importing browser code.
+
+To rebuild the committed stylesheet after editing classes, install the pinned build dependency and check the result:
+
+```bash
+npm ci --ignore-scripts
+npm run build:styles
+npm test
+```
+
+The build uses Tailwind only at development time. CI repeats the build and fails if the generated HTML differs from the committed file.
 
 ## Conceptual vocabulary
 
@@ -79,7 +94,7 @@ The prototype draws on the Inward Physics™ research program:
 
 ## Implementation
 
-- Single HTML file
+- Single HTML runtime file with bundled CSS and JavaScript
 - Vanilla JavaScript and Canvas
 - Browser-local persistence
 - No LLM, training pipeline, or server-side model
