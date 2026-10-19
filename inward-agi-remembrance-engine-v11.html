@@ -156,6 +156,21 @@
           <div id="retrieval-audit" class="mt-3 text-slate-300 leading-relaxed" role="status" aria-live="polite">No query inspected yet.</div>
         </div>
 
+        <details class="glass rounded-[1.25rem] p-4 text-sm">
+          <summary class="font-semibold text-cyan-300">Review and remove saved memories</summary>
+          <p class="text-slate-300 mt-3">Choose an entry to review before removing it from this browser's saved history. Removal also clears retrieval labels for that text and resets the visual field. Other open tabs, downloads, and device backups may still have copies.</p>
+          <ol id="memory-entries" class="mt-3 max-h-56 overflow-y-auto space-y-2 break-words"></ol>
+          <p id="memory-manage-status" class="mt-3 text-slate-300" role="status" aria-live="polite">No memory selected.</p>
+          <div id="forget-review" hidden class="mt-3 rounded-xl border border-rose-400/50 bg-black/20 p-3">
+            <p class="text-slate-200">Review the exact entry that will be removed:</p>
+            <p id="forget-preview" class="mt-2 text-slate-100 break-words"></p>
+            <div class="flex flex-wrap gap-2 mt-3">
+              <button type="button" onclick="commitForgottenMemory()" class="rounded-xl border border-rose-400/65 px-4 py-2 text-rose-200">Remove this saved entry</button>
+              <button type="button" onclick="cancelForgetReview()" class="rounded-xl border border-white/20 px-4 py-2 text-slate-200">Cancel</button>
+            </div>
+          </div>
+        </details>
+
         <div class="glass rounded-[1.25rem] p-4 text-sm">
           <div class="tiny text-cyan-300 mb-2">Browser-local state</div>
           <p id="storage-status" class="text-slate-300 mb-3" role="status">Entries and the field snapshot are saved in this browser. Export includes your entered text.</p>
@@ -326,6 +341,7 @@
     let stateRevision = 0;
     let importGeneration = 0;
     let pendingImport = null;
+    let pendingForget = null;
     let lastStoredRaw = null;
     let storageConflict = false;
     let vaultLocked = false;
@@ -372,6 +388,7 @@
     function saveState() {
       stateRevision++;
       if (pendingImport) cancelImportReview('Local state changed. Review the file again before restoring.');
+      if (pendingForget) cancelForgetReview('Local state changed. Review the memory again before removing it.');
       if (vaultLocked || storageConflict) { showStorageStatus(); return; }
       if (vaultSession) {
         const session = vaultSession;
@@ -443,6 +460,7 @@
       vaultLocked = true;
       stateRevision++;
       cancelImportReview('Vault locked. Unlock before reviewing a file.');
+      cancelForgetReview('Vault locked. Unlock before reviewing a memory.');
       userHistory = [];
       ledgerEntries = [];
       memoryTraces = [];
@@ -458,6 +476,7 @@
       document.getElementById('chat').replaceChildren();
       document.getElementById('law-modal').classList?.add('hidden');
       renderLedger();
+      renderMemoryList();
       coherence = calculateCoherence();
       updateFieldStateUI();
       document.getElementById('app-shell').inert = true;
@@ -684,6 +703,7 @@
         document.getElementById('vault-status').textContent = 'Vault unlocked. New saves are encrypted in this browser.';
         document.getElementById('chat').replaceChildren();
         renderLedger();
+        renderMemoryList();
         appendMessage(`Restored ${userHistory.length} protected remembrance entries.\nWhat would you like to revisit?`, false);
         coherence = calculateCoherence();
         updateFieldStateUI();
@@ -1181,6 +1201,103 @@
       });
     }
 
+    function cancelForgetReview(message = 'No memory selected.') {
+      pendingForget = null;
+      document.getElementById('forget-review').hidden = true;
+      document.getElementById('forget-preview').textContent = '';
+      document.getElementById('memory-manage-status').textContent = message;
+    }
+
+    function renderMemoryList() {
+      const list = document.getElementById('memory-entries');
+      list.replaceChildren();
+      userHistory.forEach((entry, index) => {
+        const item = document.createElement('li');
+        item.className = 'rounded-lg bg-white/5 p-3';
+        const detail = document.createElement('p');
+        const date = new Date(entry.ts);
+        const when = Number.isFinite(date.getTime()) ? date.toLocaleString() : 'Unrenderable date';
+        detail.textContent = `${index + 1}. ${entry.text} · ${when}`;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'mt-2 rounded-lg border border-rose-400/50 px-3 py-1 text-rose-200';
+        button.textContent = `Review removal of memory ${index + 1}`;
+        button.addEventListener('click', () => reviewForget(index));
+        item.appendChild(detail);
+        item.appendChild(button);
+        list.appendChild(item);
+      });
+      if (!userHistory.length) list.textContent = 'No saved memories to review.';
+    }
+
+    function reviewForget(index) {
+      cancelForgetReview();
+      if (vaultLocked || vaultTransition || storageConflict || !storageAvailable || vaultPendingWrites ||
+          !Number.isInteger(index) || index < 0 || index >= userHistory.length) {
+        document.getElementById('memory-manage-status').textContent = 'Removal unavailable. Unlock the vault and wait for saves, or resolve the storage conflict.';
+        return false;
+      }
+      try {
+        const previousRaw = localStorage.getItem(STORAGE_KEY);
+        if (!previousRaw || previousRaw !== lastStoredRaw ||
+            (vaultSession && previousRaw !== vaultSession.lastRaw)) {
+          document.getElementById('memory-manage-status').textContent = 'Saved state changed. Reload before reviewing a memory.';
+          return false;
+        }
+        const {text, ts} = userHistory[index];
+        pendingForget = {index, text, ts, previousRaw, revision: stateRevision, session: vaultSession};
+        document.getElementById('forget-preview').textContent = text;
+        document.getElementById('forget-review').hidden = false;
+        document.getElementById('memory-manage-status').textContent = `Memory ${index + 1} of ${userHistory.length} selected. Confirm its removal below.`;
+        return true;
+      } catch (_) {
+        document.getElementById('memory-manage-status').textContent = 'Removal unavailable: browser storage cannot be read.';
+        return false;
+      }
+    }
+
+    async function commitForgottenMemory() {
+      if (!pendingForget || vaultLocked || vaultTransition || storageConflict) return false;
+      const review = pendingForget;
+      vaultTransition = true;
+      try {
+        if (review.session) await vaultWriteQueue;
+        const current = userHistory[review.index];
+        const stillCurrent = () => pendingForget === review && review.revision === stateRevision &&
+          review.session === vaultSession && !vaultLocked && !storageConflict &&
+          current && current.text === review.text && current.ts === review.ts &&
+          lastStoredRaw === review.previousRaw && localStorage.getItem(STORAGE_KEY) === review.previousRaw &&
+          (!vaultSession || vaultSession.lastRaw === review.previousRaw);
+        if (!stillCurrent()) {
+          cancelForgetReview('Saved state changed. Review the memory again before removing it.');
+          return false;
+        }
+        const label = review.text.substring(0, 28) + (review.text.length > 28 ? '…' : '');
+        const next = {...stateSnapshot(),
+          user_history: userHistory.filter((_, index) => index !== review.index).map(({text, ts}) => ({text, ts})),
+          ledger_entries: ledgerEntries.filter(entry => entry.text !== label),
+          field: Array(FIELD_WIDTH).fill(MU_BASE)};
+        const serialized = vaultSession
+          ? JSON.stringify(await sealVaultState(next, vaultSession.key, vaultSession.salt))
+          : JSON.stringify(next);
+        if (!stillCurrent()) {
+          cancelForgetReview('Saved state changed while preparing removal. Review the memory again.');
+          return false;
+        }
+        localStorage.setItem(STORAGE_KEY, serialized);
+        lastStoredRaw = serialized;
+        if (vaultSession) vaultSession.lastRaw = serialized;
+        cancelForgetReview('Memory removed from saved state. Reloading…');
+        window.location.reload();
+        return true;
+      } catch (_) {
+        cancelForgetReview('Removal failed: browser storage could not be updated. Your saved memory was preserved.');
+        return false;
+      } finally {
+        vaultTransition = false;
+      }
+    }
+
     function updateLedger(rememberedText) {
       if (!rememberedText) return;
       const entry = { text: rememberedText.substring(0, 28) + (rememberedText.length > 28 ? '…' : ''), ts: Date.now() };
@@ -1334,6 +1451,7 @@
 
       userHistory.push({ text, tokens: tokenize(text), ts: Date.now() });
       if (userHistory.length > 40) userHistory.shift();
+      renderMemoryList();
       coherence = calculateCoherence();
       updateFieldStateUI();
       saveState();
@@ -1377,6 +1495,7 @@
     window.addEventListener?.('storage', event => {
       if (event.key !== STORAGE_KEY || event.newValue === lastStoredRaw) return;
       storageConflict = true;
+      cancelForgetReview('Saved state changed in another tab. Reload before removing a memory.');
       if (vaultSession || vaultLocked) enterLockedState('Vault changed in another tab. Unlock the latest saved version.');
       else showStorageStatus();
     });
@@ -1388,6 +1507,7 @@
 
     loadState();
     renderLedger();
+    renderMemoryList();
     appendMessage(vaultLocked
       ? 'The browser vault is locked. Unlock to restore saved memory.'
       : userHistory.length

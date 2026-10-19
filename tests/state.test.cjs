@@ -101,6 +101,104 @@ test('entries, retrieval ledger, and field snapshot survive reload', () => {
   assert.ok(second.read('mu.some(x => x !== MU_BASE)'));
 });
 
+test('reviewed removal writes one fewer memory, clears its label, and resets the field', async () => {
+  const app = boot(new Map([['unrelated', 'keep']]));
+  app.send('Private Corvallis sunrise');
+  app.send('Can you recall that Corvallis sunrise?');
+  app.send('An unrelated memory from Eugene');
+  app.read('updateLedger("Private Corvallis sunrise"); saveState()');
+  const before = app.saved.get(key);
+  assert.ok(JSON.parse(before).ledger_entries.some(entry => entry.text === 'Private Corvallis sunrise'));
+  assert.equal(app.read('reviewForget(0)'), true);
+  assert.equal(app.elements.get('forget-preview').textContent, 'Private Corvallis sunrise');
+  assert.equal(app.saved.get(key), before);
+  assert.equal(await app.read('commitForgottenMemory()'), true);
+  assert.equal(app.window.reloaded, true);
+  const saved = JSON.parse(app.saved.get(key));
+  assert.equal(saved.user_history.length, 2);
+  assert.ok(saved.user_history.every(entry => entry.text !== 'Private Corvallis sunrise'));
+  assert.ok(saved.ledger_entries.every(entry => entry.text !== 'Private Corvallis sunrise'));
+  assert.ok(saved.field.every(value => value === 0.1));
+  assert.equal(app.saved.get('unrelated'), 'keep');
+  const reloaded = boot(app.saved);
+  assert.equal(reloaded.read('userHistory.length'), 2);
+  assert.equal(reloaded.read('inspectRetrieval("Private").selected'), null);
+});
+
+test('a stale removal review and failed storage write cannot discard existing memories', async () => {
+  const app = boot();
+  app.send('First memory');
+  assert.equal(app.read('reviewForget(0)'), true);
+  app.send('Second memory');
+  const updated = app.saved.get(key);
+  assert.equal(await app.read('commitForgottenMemory()'), false);
+  assert.equal(app.saved.get(key), updated);
+  assert.equal(app.elements.get('forget-review').hidden, true);
+
+  assert.equal(app.read('reviewForget(0)'), true);
+  const competing = JSON.stringify({...JSON.parse(updated), saved_at: new Date().toISOString()});
+  app.saved.set(key, competing);
+  assert.equal(await app.read('commitForgottenMemory()'), false);
+  assert.equal(app.saved.get(key), competing);
+
+  const blocked = boot(new Map([[key, updated]]), false, true);
+  assert.equal(blocked.read('reviewForget(0)'), true);
+  assert.equal(await blocked.read('commitForgottenMemory()'), false);
+  assert.equal(blocked.saved.get(key), updated);
+  assert.equal(blocked.window.reloaded, undefined);
+});
+
+test('selective removal in the vault remains encrypted and cannot overwrite a changed vault', async () => {
+  const app = boot();
+  app.send('Vault secret to remove');
+  app.send('Vault memory to retain');
+  assert.equal(await enableVault(app), true);
+  const before = JSON.parse(app.saved.get(key));
+  assert.equal(app.read('reviewForget(0)'), true);
+  assert.equal(await app.read('commitForgottenMemory()'), true);
+  const after = JSON.parse(app.saved.get(key));
+  assert.equal(after.format, 'aru-remembrance-vault-v1');
+  assert.equal(after.salt, before.salt);
+  assert.notEqual(after.iv, before.iv);
+  assert.doesNotMatch(JSON.stringify(after), /Vault secret to remove/);
+  const reloaded = boot(app.saved);
+  assert.equal(reloaded.read('vaultLocked'), true);
+  assert.equal(await unlockVault(reloaded), true);
+  assert.equal(reloaded.read('userHistory.length'), 1);
+  assert.equal(reloaded.read('userHistory[0].text'), 'Vault memory to retain');
+
+  assert.equal(reloaded.read('reviewForget(0)'), true);
+  const external = JSON.stringify({...after, iv: Buffer.alloc(12, 9).toString('base64')});
+  app.saved.set(key, external);
+  assert.equal(await reloaded.read('commitForgottenMemory()'), false);
+  assert.equal(app.saved.get(key), external);
+});
+
+test('a cross-tab change during selective vault removal wins over the delayed encryption', async () => {
+  const app = boot();
+  app.send('Protected entry');
+  assert.equal(await enableVault(app), true);
+  assert.equal(app.read('reviewForget(0)'), true);
+  let entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  app.context.sealStarted = entered;
+  app.read(`const originalSealForRemoval = sealVaultState;
+    sealVaultState = async (...args) => {
+      sealStarted();
+      await new Promise(resolve => { globalThis.continueRemovalSeal = resolve; });
+      return originalSealForRemoval(...args);
+    };`);
+  const removing = app.read('commitForgottenMemory()');
+  await started;
+  const competing = JSON.stringify({...JSON.parse(app.saved.get(key)), iv: Buffer.alloc(12, 7).toString('base64')});
+  app.saved.set(key, competing);
+  app.window.fireStorage({key, newValue: competing});
+  app.context.continueRemovalSeal();
+  assert.equal(await removing, false);
+  assert.equal(app.saved.get(key), competing);
+  assert.equal(app.read('vaultLocked'), true);
+});
+
 test('response gate uses the field score after the submitted perturbation', () => {
   const app = boot();
   app.read('calculateCoherence = () => 0.1');

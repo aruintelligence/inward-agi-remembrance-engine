@@ -23,6 +23,7 @@ It explores a memory-first design question:
 - A deduplicated memory ledger
 - An evidence-aware lexical recall rule that abstains on unrelated or equally supported memories
 - A local Recall evidence lab that shows matching words without saving inspection queries
+- A reviewed control for removing an individual saved memory
 - Visual traces for input, retrieval, and veto states
 - A stochastic reaction-diffusion-style field with saturation
 - A modeled coherence value derived from internal field state
@@ -61,6 +62,8 @@ To move either file to another browser, choose it under **Move your memory to th
 
 To combine memory histories instead, use **Select current**, **Select incoming**, or the checkboxes, then **Merge selected memories**. The page lists every distinct text-and-timestamp pair with its source. An exact pair in both copies appears once; the same text with a different timestamp remains a separate event. A plan above 40 selected memories cannot be saved, and unchecked events are counted as excluded. Merge keeps the current browser's field and retrieval labels as captured when you reviewed the file; it adds only the selected history entries, sorted by their recorded timestamps. Those timestamps are editable and depend on device clocks, so the order is a display convention, not proof of when an event happened. The import file and existing browser state remain untouched until the final save. A successful save reloads the app; it does not create an undo copy, so download your current state before committing if you may need it later.
 
+To remove one entry, open **Review and remove saved memories**, select its **Review removal** button, read the exact text, then choose **Remove this saved entry**. The app refuses a stale review or a failed storage write; the in-memory session is not changed until the new complete snapshot is saved. It removes that entry, clears any matching retrieval label, resets the visual field, and reloads to clear the old chat and inspection panel. If the browser vault is active, the replacement snapshot remains encrypted with a fresh IV. This has no undo. Download a backup first if you may need the entry later. Other open tabs, previously downloaded files, browser history, and device backups can retain copies; reload other tabs before relying on their displayed history.
+
 The importer accepts complete v1 state exports within 256 KB, directly or inside an encrypted envelope of at most 512 KB, and the app's documented limits: at most 40 memories, three labels, and exactly 720 finite field values. It refuses malformed or clipped files without a partial restore. A new interaction or a changed saved snapshot in another tab invalidates the review, including during decryption. If browser storage cannot be written, restore refuses to proceed. When the vault is unlocked, an approved replacement or merge is saved as encrypted browser state. The app does not upload the selected file or entered text and does not load remote scripts, fonts, or styles. Browser extensions or other device users may affect local privacy. Review does not prove who created a file or whether its contents are true.
 
 Encrypted exports use the `aru-remembrance-encrypted-v1` envelope. It records the format, 600,000 PBKDF2-HMAC-SHA-256 iterations, a random 16-byte salt, a random 12-byte IV, and AES-256-GCM ciphertext with a 128-bit authentication tag. The format string is authenticated as associated data. A new salt and IV are generated for every export; decryption rejects a wrong passphrase or modified ciphertext before showing any review. The envelope metadata and file size remain visible. A weak or reused passphrase is vulnerable to offline guessing by anyone who obtains the file. This is a portable-copy protection feature, not a claim of verified sender identity or whole-device encryption.
@@ -75,7 +78,7 @@ Run the local regression suite with Node.js 22 and Python 3 available:
 node tests/state.test.cjs
 ```
 
-It covers reload and retrieval, unsupported and ambiguous recall, independent Python verification, the initial empty-state label, response gating, malformed and blocked storage, both export formats, vault migration and locking, independent decryption, wrong passphrases, tampering, encrypted restore and merge, deduplication, capacity refusal, stale review, failed write, and erasure. [The retrieval protocol](RETRIEVAL_PROTOCOL.md) states the exact rule and shows how to recheck an unencrypted exported state without importing browser code.
+It covers reload and retrieval, unsupported and ambiguous recall, independent Python verification, the initial empty-state label, response gating, malformed and blocked storage, both export formats, vault migration and locking, independent decryption, wrong passphrases, tampering, encrypted restore and merge, reviewed individual removal, deduplication, capacity refusal, stale review, failed write, and erasure. [The retrieval protocol](RETRIEVAL_PROTOCOL.md) states the exact rule and shows how to recheck an unencrypted exported state without importing browser code.
 
 To rebuild the committed stylesheet after editing classes, install the pinned build dependency and check the result:
 
@@ -87,7 +90,7 @@ npm test
 
 The build uses Tailwind only at development time. CI repeats the build and fails if the generated HTML differs from the committed file.
 
-The browser regression opens the committed HTML on a local server in headless Chromium. It exercises real Web Crypto and `localStorage`, lock and unlock, an encrypted download, and reviewed restore in a separate browser context. To run it locally after `npm ci`:
+The browser regression opens the committed HTML on a local server in headless Chromium. It exercises real Web Crypto and `localStorage`, lock and unlock, an encrypted download, reviewed removal in both vault and plaintext modes, and reviewed restore in a separate browser context. To run it locally after `npm ci`:
 
 ```bash
 npx playwright install --with-deps --only-shell chromium

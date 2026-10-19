@@ -90,6 +90,23 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       assert.equal(JSON.parse(downloaded).format, 'aru-remembrance-encrypted-v1');
       assert.doesNotMatch(downloaded, /Corvallis sunrise|A second private/);
 
+      await page.getByText('Review and remove saved memories').click();
+      await page.getByRole('button', {name: 'Review removal of memory 1'}).click();
+      assert.equal(await page.locator('#forget-preview').textContent(), 'Corvallis sunrise belongs to this vault');
+      const beforeRemoval = await page.evaluate(key => localStorage.getItem(key), storageKey);
+      await Promise.all([
+        page.waitForEvent('load'),
+        page.getByRole('button', {name: 'Remove this saved entry'}).click()
+      ]);
+      assert.notEqual(await page.evaluate(key => localStorage.getItem(key), storageKey), beforeRemoval);
+      assert.equal(await page.locator('#vault-lock').isVisible(), true);
+      await page.locator('#vault-unlock-passphrase').fill(vaultPassword);
+      await page.getByRole('button', {name: 'Unlock browser vault'}).click();
+      await page.locator('#vault-lock').waitFor({state: 'hidden'});
+      assert.equal(await page.locator('#memory-depth').textContent(), '1');
+      assert.equal(await page.locator('#memory-entries').textContent().then(text => text.includes('Corvallis sunrise belongs')), false);
+      assert.doesNotMatch(await page.locator('#chat').textContent(), /Corvallis sunrise belongs/);
+
       const receiver = await browser.newContext();
       const receivingPage = await receiver.newPage();
       receivingPage.on('pageerror', error => pageErrors.push(error.message));
@@ -107,6 +124,15 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       ]);
       assert.equal(await receivingPage.locator('#memory-depth').textContent(), '2');
       assert.equal(JSON.parse(await receivingPage.evaluate(key => localStorage.getItem(key), storageKey)).user_history.length, 2);
+      await receivingPage.getByText('Review and remove saved memories').click();
+      await receivingPage.getByRole('button', {name: 'Review removal of memory 1'}).click();
+      await Promise.all([
+        receivingPage.waitForEvent('load'),
+        receivingPage.getByRole('button', {name: 'Remove this saved entry'}).click()
+      ]);
+      const remaining = JSON.parse(await receivingPage.evaluate(key => localStorage.getItem(key), storageKey));
+      assert.deepEqual(remaining.user_history.map(entry => entry.text), ['A second private Corvallis memory']);
+      assert.ok(remaining.field.every(value => value === 0.1));
       assert.deepEqual(remoteRequests, []);
       assert.deepEqual(pageErrors, []);
       await receiver.close();
