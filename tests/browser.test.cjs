@@ -323,6 +323,21 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       assert.equal(checkedRecovery.status, 0, checkedRecovery.stderr);
       assert.equal(JSON.parse(checkedRecovery.stdout).memories, 2);
       assert.equal(JSON.parse(checkedRecovery.stdout).integrity, 'aes-256-gcm-tag-verified');
+      await localVaultPage.locator('#verify-file').setInputFiles({
+        name: 'recovery-check.json', mimeType: 'application/json', buffer: Buffer.from(recoveryBytes)
+      });
+      await localVaultPage.locator('#verify-passphrase').fill('wrong portable passphrase');
+      await localVaultPage.getByRole('button', {name: 'Verify downloaded copy'}).click();
+      await localVaultPage.locator('#verify-status').filter({hasText: /Wrong passphrase or damaged/}).waitFor();
+      await localVaultPage.locator('#verify-passphrase').fill(portablePassword);
+      await localVaultPage.getByRole('button', {name: 'Verify downloaded copy'}).click();
+      await localVaultPage.locator('#verify-status').filter({hasText: /AES-GCM tag verified/}).waitFor();
+      const checkedInBrowser = await localVaultPage.locator('#verify-status').textContent();
+      assert.match(checkedInBrowser, /2 memories, 0 labels/);
+      assert.match(checkedInBrowser, new RegExp(JSON.parse(checkedRecovery.stdout).file_sha256));
+      assert.doesNotMatch(checkedInBrowser, /Local pending protected edit/);
+      assert.equal(await localVaultPage.locator('#verify-passphrase').inputValue(), '');
+      assert.equal(await localVaultPage.evaluate(exitWarning), true);
       assert.equal(await localVaultPage.evaluate(key => localStorage.getItem(key), storageKey), newerVaultRaw);
       localVaultPage.on('dialog', dialog => dialog.accept());
       await localVaultPage.reload();

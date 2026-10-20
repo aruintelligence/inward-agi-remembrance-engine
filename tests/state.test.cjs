@@ -88,6 +88,14 @@ function warnsOnExit(app) {
   return event.prevented === true;
 }
 
+function selectVerificationFile(app, raw) {
+  const bytes = Buffer.from(raw, 'utf8');
+  const file = {size: bytes.length, arrayBuffer: async () => Uint8Array.from(bytes).buffer};
+  app.context.document.getElementById('verify-file').files = [file];
+  app.read('resetBackupVerification()');
+  return file;
+}
+
 const vaultPassword = 'unique browser vault passphrase 2026';
 
 async function enableVault(app, passphrase = vaultPassword) {
@@ -555,6 +563,78 @@ test('encrypted export is private, randomized, independently decryptable, and re
   assert.match(receiver.elements.get('import-summary').textContent, /1 incoming memories/);
   assert.equal(receiver.read('applyReviewedImport()'), true);
   assert.equal(boot(saved).read('userHistory[0].text'), 'A private café memory');
+});
+
+test('read-only browser verifier authenticates a downloaded copy and hashes its exact bytes', async () => {
+  const donor = boot();
+  donor.send('Confidential Corvallis recovery memory');
+  const passphrase = 'browser verification passphrase 2026';
+  donor.context.document.getElementById('export-passphrase').value = passphrase;
+  donor.context.document.getElementById('export-confirm').value = passphrase;
+  assert.equal(await donor.read('exportEncryptedState()'), true);
+  const raw = await donor.exports[0].text();
+  const receiver = boot();
+  receiver.send('Existing browser entry stays untouched');
+  const stored = receiver.saved.get(key);
+  const revision = receiver.read('stateRevision');
+  selectVerificationFile(receiver, raw);
+  receiver.context.document.getElementById('verify-passphrase').value = passphrase;
+  assert.equal(await receiver.read('verifyBackupFile()'), true);
+  const status = receiver.elements.get('verify-status').textContent;
+  assert.match(status, /AES-GCM tag verified.*1 memory, 0 labels/);
+  assert.match(status, new RegExp(createHash('sha256').update(Buffer.from(raw)).digest('hex')));
+  assert.doesNotMatch(status, /Confidential Corvallis|Existing browser entry/);
+  assert.equal(receiver.elements.get('verify-passphrase').value, '');
+  assert.equal(receiver.saved.get(key), stored);
+  assert.equal(receiver.read('stateRevision'), revision);
+  assert.equal(receiver.read('pendingImport'), null);
+  assert.equal(receiver.exports.length, 0);
+
+  selectVerificationFile(receiver, JSON.stringify(donor.read('stateSnapshot()')));
+  assert.equal(await receiver.read('verifyBackupFile()'), true);
+  assert.match(receiver.elements.get('verify-status').textContent, /Plain JSON structure valid; no cryptographic authentication/);
+  assert.equal(receiver.saved.get(key), stored);
+});
+
+test('browser verification refuses wrong keys, damage, vault files, and stale selections', async () => {
+  const donor = boot();
+  donor.send('Private backup to verify');
+  const passphrase = 'another verification passphrase 2026';
+  donor.context.document.getElementById('export-passphrase').value = passphrase;
+  donor.context.document.getElementById('export-confirm').value = passphrase;
+  await donor.read('exportEncryptedState()');
+  const raw = await donor.exports[0].text();
+  const app = boot();
+  selectVerificationFile(app, raw);
+  app.context.document.getElementById('verify-passphrase').value = 'wrong verification password';
+  assert.equal(await app.read('verifyBackupFile()'), false);
+  assert.match(app.elements.get('verify-status').textContent, /Wrong passphrase or damaged/);
+  assert.equal(app.elements.get('verify-passphrase').value, '');
+
+  const envelope = JSON.parse(raw);
+  const ciphertext = Buffer.from(envelope.ciphertext, 'base64');
+  ciphertext[0] ^= 1;
+  selectVerificationFile(app, JSON.stringify({...envelope, ciphertext: ciphertext.toString('base64')}));
+  app.context.document.getElementById('verify-passphrase').value = passphrase;
+  assert.equal(await app.read('verifyBackupFile()'), false);
+  assert.match(app.elements.get('verify-status').textContent, /Wrong passphrase or damaged/);
+  assert.equal(await enableVault(donor), true);
+  selectVerificationFile(app, donor.saved.get(key));
+  app.context.document.getElementById('verify-passphrase').value = passphrase;
+  assert.equal(await app.read('verifyBackupFile()'), false);
+  assert.match(app.elements.get('verify-status').textContent, /Encrypted file format is invalid/);
+
+  const held = selectVerificationFile(app, raw);
+  let release;
+  held.arrayBuffer = () => new Promise(resolve => { release = resolve; });
+  app.context.document.getElementById('verify-passphrase').value = passphrase;
+  const checking = app.read('verifyBackupFile()');
+  selectVerificationFile(app, JSON.stringify(donor.read('stateSnapshot()')));
+  release(Uint8Array.from(Buffer.from(raw)).buffer);
+  assert.equal(await checking, false);
+  assert.equal(app.elements.get('verify-status').textContent, 'No file verified.');
+  assert.equal(app.elements.get('verify-passphrase').value, '');
+  assert.equal(app.saved.get(key), undefined);
 });
 
 test('independent backup CLI checks genuine plain and encrypted exports without printing memory text', async () => {
