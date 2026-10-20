@@ -80,6 +80,16 @@
 
     .ring-dot { animation: dotPulse 1.8s ease-in-out infinite; }
     @keyframes dotPulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.3); } }
+    body[data-motion="paused"] .mirror-core,
+    body[data-motion="paused"] .ring-dot,
+    body[data-motion="paused"] .scan::after { animation: none; }
+    body[data-motion="paused"] .button-soft:hover { transform: none; }
+    @media (prefers-reduced-motion: reduce) {
+      body:not([data-motion="running"]) .mirror-core,
+      body:not([data-motion="running"]) .ring-dot,
+      body:not([data-motion="running"]) .scan::after { animation: none; }
+      body:not([data-motion="running"]) .button-soft:hover { transform: none; }
+    }
 
     .slider { accent-color: var(--cyan); }
     .modal-backdrop { background: rgba(0,0,0,0.76); backdrop-filter: blur(18px); }
@@ -97,7 +107,7 @@
       <div>
         <div class="tiny text-slate-400 mb-2">Single-file cognitive field interface • Inward Physics™</div>
         <h1 class="text-5xl md:text-7xl font-extralight tracking-[0.18em] mirror-core select-none">INWARD AGI™</h1>
-        <p class="text-emerald-400 text-lg md:text-2xl tracking-[0.18em] mt-2">THE REMEMBRANCE ENGINE™ • μ(x,t) LIVE • LAW 23™ BOUND</p>
+        <p class="text-emerald-400 text-lg md:text-2xl tracking-[0.18em] mt-2">THE REMEMBRANCE ENGINE™ • <span id="field-motion-label">μ(x,t) LIVE</span> • LAW 23™ BOUND</p>
       </div>
       <div class="flex flex-wrap items-center gap-3 md:gap-4">
         <div class="glass rounded-full px-5 py-2.5 text-sm flex items-center gap-3">
@@ -122,6 +132,10 @@
           </div>
         </div>
         <canvas id="field" width="720" height="420" aria-label="Memory density field visualization"></canvas>
+        <div class="mt-4 flex flex-wrap items-center gap-2">
+          <button id="motion-toggle" type="button" aria-pressed="false" onclick="toggleMotion()" class="rounded-xl border border-cyan-400/50 px-4 py-2 text-cyan-200">Pause ambient motion</button>
+          <p id="motion-status" class="text-xs text-slate-300" role="status" aria-live="polite"></p>
+        </div>
         <div class="grid grid-cols-3 gap-3 mt-4 text-xs font-mono text-slate-400">
           <div>μ₀ = 0.10</div>
           <div class="text-center">threshold = 0.64</div>
@@ -371,6 +385,8 @@
     let vaultTransition = false;
     let vaultWriteQueue = Promise.resolve();
     let vaultPendingWrites = 0;
+    let motionPaused = !!globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+    let frameRequestId = null;
 
     function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
 
@@ -1195,6 +1211,7 @@
           ? `${used} of ${MAX_MEMORIES} memories used. ${MAX_MEMORIES - used} space${MAX_MEMORIES - used === 1 ? '' : 's'} remain; consider an encrypted backup.`
           : `${used} of ${MAX_MEMORIES} memories used.`;
       if (capacity.textContent !== message) capacity.textContent = message;
+      if (motionPaused) drawField();
     }
 
     function applyTraceForces() {
@@ -1293,11 +1310,38 @@
       return t > 0 ? w / t : FIELD_WIDTH / 2;
     }
 
+    function scheduleFieldFrame() {
+      if (!motionPaused && frameRequestId === null) frameRequestId = requestAnimationFrame(loop);
+    }
+
     function loop() {
+      frameRequestId = null;
+      if (motionPaused) return;
       evolveField();
       drawField();
       updateFieldStateUI();
-      requestAnimationFrame(loop);
+      scheduleFieldFrame();
+    }
+
+    function renderMotionControl() {
+      document.body.dataset.motion = motionPaused ? 'paused' : 'running';
+      const button = document.getElementById('motion-toggle');
+      button.textContent = motionPaused ? 'Resume ambient motion' : 'Pause ambient motion';
+      button.setAttribute('aria-pressed', String(motionPaused));
+      document.getElementById('field-motion-label').textContent = motionPaused ? 'μ(x,t) PAUSED' : 'μ(x,t) LIVE';
+      canvas.setAttribute('aria-label', motionPaused
+        ? 'Paused memory density field visualization; deliberate inputs still change it'
+        : 'Live memory density field visualization');
+      document.getElementById('motion-status').textContent = motionPaused
+        ? 'Idle field and decorative motion paused. Your inputs still change the model.'
+        : 'Ambient field motion is running.';
+    }
+
+    function toggleMotion() {
+      motionPaused = !motionPaused;
+      renderMotionControl();
+      if (motionPaused) updateFieldStateUI();
+      else scheduleFieldFrame();
     }
 
     function appendMessage(text, isUser = false) {
@@ -1671,8 +1715,9 @@
       : 'The inward mirror is open.\nRemembrance is listening.\nWhat do you remember?', false);
 
     coherence = calculateCoherence();
+    renderMotionControl();
     updateFieldStateUI();
-    requestAnimationFrame(loop);
+    scheduleFieldFrame();
   </script>
 </body>
 </html>

@@ -12,7 +12,7 @@ const source = html.match(/<script>([\s\S]*?)<\/script>/)[1];
 const key = 'aru_remembrance_engine_v11_state';
 
 function boot(saved = new Map(), storageBlocked = false, storageWriteBlocked = false,
-  storageDeleteBlocked = false, storageDeleteNoop = false) {
+  storageDeleteBlocked = false, storageDeleteNoop = false, reducedMotion = false) {
   const elements = new Map();
   const exports = [];
   class Element {
@@ -23,8 +23,17 @@ function boot(saved = new Map(), storageBlocked = false, storageWriteBlocked = f
       this.textContent = '';
       this.innerHTML = '';
       this.className = '';
+      this.dataset = {};
+      this.attributes = {};
     }
-    getContext() { return {}; }
+    getContext() {
+      return {
+        clearRect() {}, fillRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {},
+        setLineDash() {}, quadraticCurveTo() {}, arc() {},
+        createRadialGradient() { return {addColorStop() {}}; }
+      };
+    }
+    setAttribute(name, value) { this.attributes[name] = value; }
     appendChild(child) { this.children.push(child); child.parent = this; }
     replaceChildren() { this.children = []; }
     remove() { if (this.parent) this.parent.children = this.parent.children.filter(c => c !== this); }
@@ -56,9 +65,10 @@ function boot(saved = new Map(), storageBlocked = false, storageWriteBlocked = f
   };
   const context = vm.createContext({
     document, localStorage, window, Blob, console, crypto: webcrypto,
+    matchMedia() { return {matches: reducedMotion}; },
     TextEncoder, TextDecoder, btoa, atob,
     URL: { createObjectURL(blob) { exports.push(blob); return 'blob:export'; }, revokeObjectURL() {} },
-    requestAnimationFrame() {}, setTimeout(callback) { callback(); },
+    requestAnimationFrame() { return 1; }, setTimeout(callback) { callback(); },
     performance: { now() { return 0; } }
   });
   vm.runInContext(source, context);
@@ -348,6 +358,30 @@ test('response gate uses the field score after the submitted perturbation', () =
   app.send('expand this field');
   const messages = app.elements.get('chat').children.map(row => row.children[0].textContent);
   assert.ok(messages.some(message => message.includes('Guardian Veto™ engaged')));
+});
+
+test('reduced motion pauses idle evolution but deliberate inputs still change the field', () => {
+  const app = boot(new Map(), false, false, false, false, true);
+  assert.equal(app.read('motionPaused'), true);
+  assert.equal(app.context.document.body.dataset.motion, 'paused');
+  assert.equal(app.elements.get('motion-toggle').attributes['aria-pressed'], 'true');
+  assert.equal(app.read('frameRequestId'), null);
+  const baseline = Array.from(app.read('Array.from(mu)'));
+  app.read('loop()');
+  assert.deepEqual(Array.from(app.read('Array.from(mu)')), baseline);
+  app.send('A deliberate signal changes the paused field');
+  const afterInput = Array.from(app.read('Array.from(mu)'));
+  assert.notDeepEqual(afterInput, baseline);
+  app.read('loop()');
+  assert.deepEqual(Array.from(app.read('Array.from(mu)')), afterInput);
+  app.read('toggleMotion()');
+  assert.equal(app.context.document.body.dataset.motion, 'running');
+  assert.equal(app.elements.get('motion-toggle').attributes['aria-pressed'], 'false');
+  app.read('loop()');
+  assert.notDeepEqual(Array.from(app.read('Array.from(mu)')), afterInput);
+  app.read('toggleMotion()');
+  assert.equal(app.read('motionPaused'), true);
+  assert.equal(JSON.parse(app.saved.get(key)).user_history.length, 1);
 });
 
 test('damaged snapshots are ignored and blocked storage does not stop interaction', () => {

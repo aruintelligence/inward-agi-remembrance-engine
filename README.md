@@ -26,6 +26,7 @@ It explores a memory-first design question:
 - A reviewed control for removing an individual saved memory
 - A visible 40-memory capacity guard that preserves a new draft instead of silently discarding the oldest memory
 - Visual traces for input, retrieval, and veto states
+- A pause control for ambient field and decorative motion, defaulting to paused when the device requests reduced motion
 - A stochastic reaction-diffusion-style field with saturation
 - A modeled coherence value derived from internal field state
 - Threshold-based contraction called Guardian Veto™
@@ -50,6 +51,8 @@ open inward-agi-remembrance-engine-v11.html
 ```
 
 On Windows, double-click the HTML file. The committed HTML includes its styles and scripts, so it can open without a network connection. Web Crypto availability for encrypted transfers and the vault depends on the browser's secure-context rules for local files. If your browser disables it for `file:` pages, serve the directory locally with `python3 -m http.server 8000` and open `http://localhost:8000/inward-agi-remembrance-engine-v11.html`.
+
+Use **Pause ambient motion** to stop the field's idle evolution and decorative animations. The app starts paused when the device requests reduced motion. While paused, deliberate inputs still affect the model and saved snapshot; **Resume ambient motion** restarts idle evolution. The control applies to this page session and does not change your device setting or add a saved preference.
 
 ## Saved state and inspection
 
@@ -95,7 +98,7 @@ npm test
 
 The build uses Tailwind only at development time. CI repeats the build and fails if the generated HTML differs from the committed file.
 
-The browser regression opens the committed HTML on a local server in headless Chromium. It exercises real Web Crypto and `localStorage`, lock, unlock and passphrase rotation, an encrypted download, reviewed removal in both vault and plaintext modes, full-capacity draft preservation, blocked and successful erasure, and reviewed restore in a separate browser context. To run it locally after `npm ci`:
+The browser regression opens the committed HTML on a local server in headless Chromium. It exercises real Web Crypto and `localStorage`, pause and resume under default and reduced-motion settings, lock, unlock and passphrase rotation, an encrypted download, reviewed removal in both vault and plaintext modes, full-capacity draft preservation, blocked and successful erasure, and reviewed restore in a separate browser context. To run it locally after `npm ci`:
 
 ```bash
 npx playwright install --with-deps --only-shell chromium

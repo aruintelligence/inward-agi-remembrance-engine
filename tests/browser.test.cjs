@@ -40,6 +40,13 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
 
       await page.goto(origin + '/engine.html');
       assert.equal(await page.evaluate(() => !!globalThis.crypto?.subtle), true);
+      await page.getByRole('button', {name: 'Pause ambient motion'}).click();
+      assert.equal(await page.locator('#motion-toggle').getAttribute('aria-pressed'), 'true');
+      const pausedField = await page.evaluate(() => Array.from(mu));
+      await page.waitForTimeout(120);
+      assert.deepEqual(await page.evaluate(() => Array.from(mu)), pausedField);
+      await page.getByRole('button', {name: 'Resume ambient motion'}).click();
+      await page.waitForFunction(previous => mu.some((value, index) => value !== previous[index]), pausedField);
       await page.locator('#input').fill('Corvallis sunrise belongs to this vault');
       await page.getByRole('button', {name: 'SEND TO REMEMBRANCE'}).click();
       const plain = await page.evaluate(key => localStorage.getItem(key), storageKey);
@@ -210,6 +217,21 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       ]);
       assert.equal(await receivingPage.evaluate(key => localStorage.getItem(key), storageKey), null);
       assert.equal(await receivingPage.evaluate(() => localStorage.getItem('unrelated')), 'keep');
+      const reducedContext = await browser.newContext({reducedMotion: 'reduce'});
+      const reducedPage = await reducedContext.newPage();
+      reducedPage.on('pageerror', error => pageErrors.push(error.message));
+      reducedPage.on('request', request => {
+        if (/^https?:/.test(request.url()) && !request.url().startsWith(origin + '/')) remoteRequests.push(request.url());
+      });
+      await reducedPage.goto(origin + '/engine.html');
+      assert.equal(await reducedPage.locator('#motion-toggle').getAttribute('aria-pressed'), 'true');
+      assert.equal(await reducedPage.locator('.mirror-core').first().evaluate(el => getComputedStyle(el).animationName), 'none');
+      const reducedField = await reducedPage.evaluate(() => Array.from(mu));
+      await reducedPage.waitForTimeout(120);
+      assert.deepEqual(await reducedPage.evaluate(() => Array.from(mu)), reducedField);
+      await reducedPage.getByRole('button', {name: 'Resume ambient motion'}).click();
+      await reducedPage.waitForFunction(previous => mu.some((value, index) => value !== previous[index]), reducedField);
+      await reducedContext.close();
       assert.deepEqual(remoteRequests, []);
       assert.deepEqual(pageErrors, []);
       await receiver.close();
