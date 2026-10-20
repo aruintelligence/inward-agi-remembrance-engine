@@ -390,6 +390,7 @@
     let vaultTransition = false;
     let vaultWriteQueue = Promise.resolve();
     let vaultPendingWrites = 0;
+    let unsavedChanges = false;
     let portableExportInProgress = false;
     let motionPaused = !!globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
     let frameRequestId = null;
@@ -450,12 +451,14 @@
 
     function saveState() {
       stateRevision++;
+      unsavedChanges = true;
       if (pendingImport) cancelImportReview('Local state changed. Review the file again before restoring.');
       if (pendingForget) cancelForgetReview('Local state changed. Review the memory again before removing it.');
       if (vaultLocked || storageConflict) { showStorageStatus(); return; }
       if (vaultSession) {
         const session = vaultSession;
         const snapshot = stateSnapshot();
+        const revision = stateRevision;
         vaultPendingWrites++;
         showStorageStatus();
         vaultWriteQueue = vaultWriteQueue.then(async () => {
@@ -471,6 +474,7 @@
           session.lastRaw = next;
           lastStoredRaw = next;
           storageAvailable = true;
+          if (stateRevision === revision) unsavedChanges = false;
         }).catch(() => {
           storageConflict = true;
           storageAvailable = false;
@@ -491,6 +495,7 @@
         localStorage.setItem(STORAGE_KEY, next);
         lastStoredRaw = next;
         storageAvailable = true;
+        unsavedChanges = false;
       } catch (_) {
         storageAvailable = false;
       }
@@ -521,6 +526,7 @@
     function enterLockedState(message = 'Enter your passphrase to unlock this browser vault.') {
       vaultSession = null;
       vaultLocked = true;
+      unsavedChanges = false;
       stateRevision++;
       cancelImportReview('Vault locked. Unlock before reviewing a file.');
       cancelForgetReview('Vault locked. Unlock before reviewing a memory.');
@@ -724,6 +730,7 @@
         localStorage.setItem(STORAGE_KEY, next);
         lastStoredRaw = next;
         storageAvailable = true;
+        unsavedChanges = false;
         vaultSession = {key, salt, lastRaw: next};
         stateRevision++;
         cancelImportReview('Vault enabled. Review the file again before restoring.');
@@ -761,6 +768,7 @@
         lastStoredRaw = raw;
         storageConflict = false;
         storageAvailable = true;
+        unsavedChanges = false;
         vaultSession = {key, salt, lastRaw: raw};
         vaultLocked = false;
         document.getElementById('vault-setup').hidden = true;
@@ -825,6 +833,7 @@
         vaultSession = {key: newKey, salt: newSalt, lastRaw: replacement};
         lastStoredRaw = replacement;
         storageAvailable = true;
+        unsavedChanges = false;
         stateRevision++;
         cancelImportReview('Vault passphrase changed. Review the file again before restoring.');
         cancelForgetReview('Vault passphrase changed. Review the memory again before removing it.');
@@ -1111,6 +1120,7 @@
         const serialized = JSON.stringify(next);
         localStorage.setItem(STORAGE_KEY, serialized);
         lastStoredRaw = serialized;
+        unsavedChanges = false;
       } catch (_) {
         cancelImportReview('Restore refused: browser storage is unavailable. Current state was not replaced.');
         return false;
@@ -1138,6 +1148,7 @@
         localStorage.setItem(STORAGE_KEY, sealed);
         session.lastRaw = sealed;
         lastStoredRaw = sealed;
+        unsavedChanges = false;
       } catch (_) {
         cancelImportReview('Restore refused: encrypted browser storage could not be written. Current state was not replaced.');
         return false;
@@ -1173,6 +1184,7 @@
         vaultSession = null;
         vaultLocked = true;
         storageConflict = true;
+        unsavedChanges = false;
         window.location.reload();
         return true;
       } catch (error) {
@@ -1503,6 +1515,7 @@
         lastStoredRaw = serialized;
         if (vaultSession) vaultSession.lastRaw = serialized;
         storageAvailable = true;
+        unsavedChanges = false;
       } catch (_) {
         cancelForgetReview('Removal failed: browser storage could not be updated. Your saved memory was preserved.');
         return false;
@@ -1745,7 +1758,7 @@
       else showStorageStatus();
     });
     window.addEventListener?.('beforeunload', event => {
-      if (!vaultPendingWrites) return;
+      if (!unsavedChanges && !vaultPendingWrites && !portableExportInProgress) return;
       event.preventDefault();
       event.returnValue = '';
     });

@@ -82,6 +82,12 @@ function boot(saved = new Map(), storageBlocked = false, storageWriteBlocked = f
   };
 }
 
+function warnsOnExit(app) {
+  const event = {preventDefault() { event.prevented = true; }};
+  app.window.listeners.get('beforeunload')(event);
+  return event.prevented === true;
+}
+
 const vaultPassword = 'unique browser vault passphrase 2026';
 
 async function enableVault(app, passphrase = vaultPassword) {
@@ -120,6 +126,28 @@ test('entries, retrieval ledger, and field snapshot survive reload', () => {
   assert.equal(second.elements.get('ledger').children[0].textContent, 'A remembered detail');
   assert.equal(second.elements.get('memory-depth').textContent, 2);
   assert.ok(second.read('mu.some(x => x !== MU_BASE)'));
+});
+
+test('exit warning tracks failed writes without warning for a saved session or unsent draft', () => {
+  const saved = new Map();
+  const app = boot(saved);
+  assert.equal(warnsOnExit(app), false);
+  app.context.document.getElementById('input').value = 'Unsent draft';
+  assert.equal(warnsOnExit(app), false);
+  app.send('A saved entry');
+  assert.equal(warnsOnExit(app), false);
+  assert.equal(warnsOnExit(boot(saved)), false);
+
+  const failed = boot(saved, false, true);
+  failed.send('An entry that could not be saved');
+  assert.equal(warnsOnExit(failed), true);
+  failed.read('exportState()');
+  assert.equal(warnsOnExit(failed), true); // A started download is not a confirmed backup.
+  assert.equal(warnsOnExit(boot(saved)), false);
+
+  const freshBlocked = boot(new Map(), true);
+  freshBlocked.send('Only present in this page');
+  assert.equal(warnsOnExit(freshBlocked), true);
 });
 
 test('reviewed removal writes one fewer memory, clears its label, and resets the field', async () => {
@@ -698,6 +726,7 @@ test('encrypted export rejects a changed session instead of delivering an outdat
   const app = boot();
   const passphrase = 'a unique portable backup passphrase';
   app.send('Original backup memory');
+  assert.equal(warnsOnExit(app), false);
   const password = app.context.document.getElementById('export-passphrase');
   const confirmation = app.context.document.getElementById('export-confirm');
   password.value = passphrase;
@@ -708,12 +737,14 @@ test('encrypted export rejects a changed session instead of delivering an outdat
   app.read('globalThis.originalEncryptPortableState = encryptPortableState; encryptPortableState = async () => { announceEncryption(); return new Promise(resolve => { globalThis.finishEncryption = resolve; }); }');
   const pending = app.read('exportEncryptedState()');
   await started;
+  assert.equal(warnsOnExit(app), true);
   assert.match(app.elements.get('crypto-status').textContent, /Preparing encrypted copy of 1 memory/);
   assert.equal(await app.read('exportEncryptedState()'), false);
   assert.match(app.elements.get('crypto-status').textContent, /already being prepared/);
   app.send('New memory during encryption');
   app.context.finishEncryption({format: 'never downloaded'});
   assert.equal(await pending, false);
+  assert.equal(warnsOnExit(app), false);
   assert.equal(app.exports.length, 0);
   assert.match(app.elements.get('crypto-status').textContent, /Session changed while encrypting/);
   assert.equal(password.value, '');
@@ -723,6 +754,7 @@ test('encrypted export rejects a changed session instead of delivering an outdat
   password.value = passphrase;
   confirmation.value = passphrase;
   assert.equal(await app.read('exportEncryptedState()'), true);
+  assert.equal(warnsOnExit(app), false);
   assert.equal(app.exports.length, 1);
   const encrypted = await app.exports[0].text();
   const restored = JSON.parse(await app.read(`decodeImportText(${JSON.stringify(encrypted)}, ${JSON.stringify(passphrase)})`));
@@ -742,10 +774,13 @@ test('locking a vault during encryption cannot start a portable download afterwa
   app.read('encryptPortableState = async () => { announceEncryption(); return new Promise(resolve => { globalThis.finishEncryption = resolve; }); }');
   const pending = app.read('exportEncryptedState()');
   await started;
+  assert.equal(warnsOnExit(app), true);
   assert.equal(await app.read('lockVault()'), true);
   assert.equal(app.read('vaultLocked'), true);
+  assert.equal(warnsOnExit(app), true);
   app.context.finishEncryption({format: 'never downloaded'});
   assert.equal(await pending, false);
+  assert.equal(warnsOnExit(app), false);
   assert.equal(app.exports.length, 0);
   assert.match(app.elements.get('crypto-status').textContent, /Session changed while encrypting/);
   assert.equal(app.elements.get('export-passphrase').value, '');
@@ -757,17 +792,26 @@ test('a queued encrypted save keeps its original ledger while a later interactio
   let announce;
   const sealing = new Promise(resolve => { announce = resolve; });
   app.context.announceSealing = announce;
-  app.read('globalThis.originalSealVaultState = sealVaultState; sealVaultState = async (state, ...args) => { if (!globalThis.firstQueuedSnapshot) { globalThis.firstQueuedSnapshot = state; announceSealing(); await new Promise(resolve => { globalThis.releaseFirstSeal = resolve; }); } return globalThis.originalSealVaultState(state, ...args); }');
+  let announceSecond;
+  const secondSealing = new Promise(resolve => { announceSecond = resolve; });
+  app.context.announceSecondSealing = announceSecond;
+  app.read('globalThis.originalSealVaultState = sealVaultState; sealVaultState = async (state, ...args) => { if (!globalThis.firstQueuedSnapshot) { globalThis.firstQueuedSnapshot = state; announceSealing(); await new Promise(resolve => { globalThis.releaseFirstSeal = resolve; }); } else if (!globalThis.secondQueuedSnapshot) { globalThis.secondQueuedSnapshot = state; announceSecondSealing(); await new Promise(resolve => { globalThis.releaseSecondSeal = resolve; }); } return globalThis.originalSealVaultState(state, ...args); }');
   app.send('Corvallis sunrise begins here');
   await sealing;
+  assert.equal(warnsOnExit(app), true);
   assert.equal(app.read('firstQueuedSnapshot.user_history.length'), 1);
   assert.equal(app.read('firstQueuedSnapshot.ledger_entries.length'), 0);
   app.send('Can you recall Corvallis sunrise?');
   assert.equal(app.read('ledgerEntries.length'), 1);
   assert.equal(app.read('firstQueuedSnapshot.ledger_entries.length'), 0);
   app.context.releaseFirstSeal();
+  await secondSealing;
+  assert.equal(app.read('unsavedChanges'), true);
+  assert.equal(warnsOnExit(app), true);
+  app.context.releaseSecondSeal();
   await app.read('vaultWriteQueue');
   assert.equal(app.read('storageConflict'), false);
+  assert.equal(warnsOnExit(app), false);
   const restored = boot(app.saved);
   assert.equal(await unlockVault(restored), true);
   assert.equal(restored.read('userHistory.length'), 2);
@@ -920,6 +964,7 @@ test('vault write failure and unreadable old state preserve the stored bytes', a
   assert.equal(await unlockVault(blocked), true);
   blocked.send('Unsaved protected entry');
   await blocked.read('vaultWriteQueue');
+  assert.equal(warnsOnExit(blocked), true);
   assert.equal(seed.saved.get(key), sealed);
   assert.equal(blocked.read('storageConflict'), true);
   assert.equal(await blocked.read('lockVault()'), false);
@@ -1015,6 +1060,7 @@ test('vault migration failure keeps the original plaintext, and locking waits fo
   app.window.listeners.get('beforeunload')(unload);
   assert.equal(unload.prevented, true);
   assert.equal(await app.read('lockVault()'), true);
+  assert.equal(warnsOnExit(app), false);
   assert.doesNotMatch(saved.get(key), /Save while locking/);
   const reloaded = boot(saved);
   assert.equal(await unlockVault(reloaded), true);

@@ -52,6 +52,12 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       await page.getByRole('button', {name: 'SEND TO REMEMBRANCE'}).click();
       const plain = await page.evaluate(key => localStorage.getItem(key), storageKey);
       assert.match(plain, /Corvallis sunrise belongs to this vault/);
+      const exitWarning = () => {
+        const event = new Event('beforeunload', {cancelable: true});
+        window.dispatchEvent(event);
+        return event.defaultPrevented;
+      };
+      assert.equal(await page.evaluate(exitWarning), false);
       await page.locator('#retrieval-query').fill('Which ATM client is in Corvallis?');
       await page.getByRole('button', {name: 'Inspect recall'}).click();
       assert.match(await page.locator('#retrieval-audit').textContent(), /Recall withheld/);
@@ -283,10 +289,12 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       await exportPage.locator('#export-confirm').fill(portablePassword);
       await exportPage.getByRole('button', {name: 'Download encrypted JSON'}).click();
       await exportPage.evaluate(() => window.exportStarted);
+      assert.equal(await exportPage.evaluate(exitWarning), true);
       await exportPage.locator('#input').fill('Added before encryption finished');
       await exportPage.getByRole('button', {name: 'SEND TO REMEMBRANCE'}).click();
       await exportPage.evaluate(() => { window.finishExport(); encryptPortableState = window.originalEncryptPortableState; });
       await exportPage.locator('#crypto-status').filter({hasText: /Session changed while encrypting/}).waitFor();
+      assert.equal(await exportPage.evaluate(exitWarning), false);
       assert.equal(await exportPage.evaluate(() => window.downloadStarts), 0);
       assert.equal(await exportPage.locator('#export-passphrase').inputValue(), '');
       await exportPage.locator('#export-passphrase').fill(portablePassword);
@@ -297,7 +305,25 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       assert.equal(await exportPage.evaluate(() => window.downloadStarts), 1);
       assert.equal(JSON.parse(freshBackup).format, 'aru-remembrance-encrypted-v1');
       assert.match(await exportPage.locator('#crypto-status').textContent(), /copy started for 2 memories/);
+      assert.equal(await exportPage.evaluate(exitWarning), false);
       await exportContext.close();
+      const blockedContext = await browser.newContext();
+      await blockedContext.addInitScript(key => {
+        const originalSetItem = Storage.prototype.setItem;
+        Storage.prototype.setItem = function(name, value) {
+          if (name === key) throw new Error('Storage write blocked for test');
+          return originalSetItem.call(this, name, value);
+        };
+      }, storageKey);
+      const blockedPage = await blockedContext.newPage();
+      blockedPage.on('pageerror', error => pageErrors.push(error.message));
+      await blockedPage.goto(origin + '/engine.html');
+      assert.equal(await blockedPage.evaluate(exitWarning), false);
+      await blockedPage.locator('#input').fill('An entry held only in this page');
+      await blockedPage.getByRole('button', {name: 'SEND TO REMEMBRANCE'}).click();
+      assert.equal(await blockedPage.evaluate(exitWarning), true);
+      assert.equal(await blockedPage.evaluate(key => localStorage.getItem(key), storageKey), null);
+      await blockedContext.close();
       const reducedContext = await browser.newContext({reducedMotion: 'reduce'});
       const reducedPage = await reducedContext.newPage();
       reducedPage.on('pageerror', error => pageErrors.push(error.message));
