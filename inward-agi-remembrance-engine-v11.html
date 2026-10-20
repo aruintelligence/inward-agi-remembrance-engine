@@ -246,7 +246,7 @@
           </div>
           <div class="mt-4 border-t border-white/10 pt-4">
             <label for="verify-file" class="tiny text-cyan-300 block mb-2">Verify a downloaded copy</label>
-            <p class="text-slate-300 mb-3">Choose the downloaded JSON file. This read-only check opens an encrypted copy with its portable passphrase, validates the complete state, and reports the exact file hash without showing entries or changing browser memory.</p>
+            <p class="text-slate-300 mb-3">Choose the downloaded JSON file. This read-only check opens an encrypted copy with its portable passphrase, validates the complete state, and reports the exact file hash and whether its memories match this page, without showing entries or changing browser memory.</p>
             <input id="verify-file" type="file" accept=".json,application/json" onchange="resetBackupVerification('Selection changed. Verify the new file.')" class="block w-full min-w-0 text-slate-200 file:mr-3 file:rounded-lg file:border-0 file:bg-cyan-900 file:px-3 file:py-2 file:text-cyan-100">
             <label for="verify-passphrase" class="block mt-3 text-slate-200">Passphrase for encrypted copy
               <input id="verify-passphrase" type="password" autocomplete="off" maxlength="1024" class="mt-1 w-full rounded-xl border border-white/20 bg-black/20 px-3 py-2 text-slate-100">
@@ -305,7 +305,7 @@
           <p id="send-status" class="text-sm text-amber-300 mt-2" role="status" aria-live="polite"></p>
           <div id="recovery-panel" hidden class="mt-3 rounded-xl border border-amber-300/50 bg-black/20 p-3 text-sm text-amber-100" role="alert">
             <p>Saving is paused. This page may contain unsaved changes. Download the current session before reloading. A waiting draft stays in the input and must be copied separately.</p>
-            <p id="vault-recovery-steps" hidden class="mt-2">Vault recovery: download an encrypted copy and use Verify downloaded copy below before leaving. Reload, unlock the latest vault, review that copy, then select current and incoming memories to merge. Keep the copy until you verify the result.</p>
+            <p id="vault-recovery-steps" hidden class="mt-2">Vault recovery: download an encrypted copy and use Verify downloaded copy below. Confirm that its memories match this page before leaving. Reload, unlock the latest vault, review that copy, then select current and incoming memories to merge. Keep the copy until you verify the result.</p>
             <button type="button" onclick="openBackupControls()" class="mt-2 text-cyan-200 underline">Show backup options</button>
           </div>
           <button type="button" onclick="openMemoryControl()" class="mt-2 text-sm text-cyan-200 underline">Manage memories</button>
@@ -466,6 +466,7 @@
 
     function saveState() {
       stateRevision++;
+      resetBackupVerification('Page changed. Recheck the selected file before relying on its comparison.');
       unsavedChanges = true;
       if (pendingImport) cancelImportReview('Local state changed. Review the file again before restoring.');
       if (pendingForget) cancelForgetReview('Local state changed. Review the memory again before removing it.');
@@ -517,6 +518,7 @@
     }
 
     function hydrateState(state) {
+      resetBackupVerification();
       if (Array.isArray(state.user_history)) {
         userHistory = state.user_history
           .filter(entry => entry && typeof entry.text === 'string')
@@ -538,6 +540,7 @@
     }
 
     function enterLockedState(message = 'Enter your passphrase to unlock this browser vault.') {
+      resetBackupVerification('Vault locked. Verify a file again after unlocking to compare memories.');
       vaultSession = null;
       vaultLocked = true;
       unsavedChanges = false;
@@ -973,7 +976,15 @@
           byte => byte.toString(16).padStart(2, '0')).join('');
         if (!isCurrent()) return false;
         const count = state.user_history.length;
-        status.textContent = `${encrypted ? 'Encrypted copy opened; AES-GCM tag verified.' : 'Plain JSON structure valid; no cryptographic authentication.'} ${count} ${count === 1 ? 'memory' : 'memories'}, ${state.ledger_entries.length} labels. File SHA-256: ${hash}. Browser state unchanged.`;
+        const memoryMatches = !vaultLocked && JSON.stringify(state.user_history) ===
+          JSON.stringify(userHistory.map(({text, ts}) => ({text, ts})));
+        const labelsMatch = !vaultLocked && JSON.stringify(state.ledger_entries) === JSON.stringify(ledgerEntries);
+        const pageComparison = vaultLocked
+          ? 'Current-page comparison unavailable while the vault is locked.'
+          : memoryMatches && labelsMatch
+            ? 'Current-page memories and labels match this file. The animated field may have changed since the download.'
+            : `Current-page ${memoryMatches ? 'memories match' : 'MEMORIES DIFFER'}; ${labelsMatch ? 'labels match' : 'labels differ'}. ${memoryMatches ? 'The retrieval labels have changed since this copy.' : 'This is not a copy of this page’s exact memories. If you need both histories, use reviewed merge.'}`;
+        status.textContent = `${encrypted ? 'Encrypted copy opened; AES-GCM tag verified.' : 'Plain JSON structure valid; no cryptographic authentication.'} ${count} ${count === 1 ? 'memory' : 'memories'}, ${state.ledger_entries.length} labels. File SHA-256: ${hash}. ${pageComparison} Browser state unchanged.`;
         return true;
       } catch (error) {
         if (isCurrent()) status.textContent = `Verification failed: ${error.message || 'File could not be opened.'}`;
@@ -1833,6 +1844,7 @@
 
     window.addEventListener?.('storage', event => {
       if (event.key !== STORAGE_KEY || event.newValue === lastStoredRaw) return;
+      resetBackupVerification('Browser storage changed. Recheck the selected file before relying on its comparison.');
       storageConflict = true;
       cancelForgetReview('Saved state changed in another tab. Reload before removing a memory.');
       if (vaultSession) handleChangedVault();

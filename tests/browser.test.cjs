@@ -335,6 +335,7 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       const checkedInBrowser = await localVaultPage.locator('#verify-status').textContent();
       assert.match(checkedInBrowser, /2 memories, 0 labels/);
       assert.match(checkedInBrowser, new RegExp(JSON.parse(checkedRecovery.stdout).file_sha256));
+      assert.match(checkedInBrowser, /Current-page memories and labels match this file/);
       assert.doesNotMatch(checkedInBrowser, /Local pending protected edit/);
       assert.equal(await localVaultPage.locator('#verify-passphrase').inputValue(), '');
       assert.equal(await localVaultPage.evaluate(exitWarning), true);
@@ -346,6 +347,12 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       await localVaultPage.getByRole('button', {name: 'Unlock browser vault'}).click();
       await localVaultPage.locator('#vault-lock').waitFor({state: 'hidden'});
       assert.equal(await localVaultPage.locator('#memory-depth').textContent(), '2');
+      await localVaultPage.locator('#verify-file').setInputFiles({
+        name: 'recovery-check.json', mimeType: 'application/json', buffer: Buffer.from(recoveryBytes)
+      });
+      await localVaultPage.locator('#verify-passphrase').fill(portablePassword);
+      await localVaultPage.getByRole('button', {name: 'Verify downloaded copy'}).click();
+      await localVaultPage.locator('#verify-status').filter({hasText: /MEMORIES DIFFER.*reviewed merge/}).waitFor();
       await localVaultPage.locator('#state-file').setInputFiles({
         name: 'recovered-encrypted.json', mimeType: 'application/json', buffer: Buffer.from(recoveryBytes)
       });

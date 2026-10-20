@@ -583,6 +583,7 @@ test('read-only browser verifier authenticates a downloaded copy and hashes its 
   const status = receiver.elements.get('verify-status').textContent;
   assert.match(status, /AES-GCM tag verified.*1 memory, 0 labels/);
   assert.match(status, new RegExp(createHash('sha256').update(Buffer.from(raw)).digest('hex')));
+  assert.match(status, /MEMORIES DIFFER.*not a copy of this page/);
   assert.doesNotMatch(status, /Confidential Corvallis|Existing browser entry/);
   assert.equal(receiver.elements.get('verify-passphrase').value, '');
   assert.equal(receiver.saved.get(key), stored);
@@ -594,6 +595,17 @@ test('read-only browser verifier authenticates a downloaded copy and hashes its 
   assert.equal(await receiver.read('verifyBackupFile()'), true);
   assert.match(receiver.elements.get('verify-status').textContent, /Plain JSON structure valid; no cryptographic authentication/);
   assert.equal(receiver.saved.get(key), stored);
+
+  selectVerificationFile(donor, raw);
+  donor.context.document.getElementById('verify-passphrase').value = passphrase;
+  assert.equal(await donor.read('verifyBackupFile()'), true);
+  assert.match(donor.elements.get('verify-status').textContent, /Current-page memories and labels match this file/);
+  donor.send('An edit submitted after that download');
+  assert.match(donor.elements.get('verify-status').textContent, /Page changed. Recheck/);
+  donor.context.document.getElementById('verify-passphrase').value = passphrase;
+  assert.equal(await donor.read('verifyBackupFile()'), true);
+  assert.match(donor.elements.get('verify-status').textContent, /MEMORIES DIFFER.*not a copy of this page/);
+  assert.doesNotMatch(donor.elements.get('verify-status').textContent, /An edit submitted after that download/);
 });
 
 test('browser verification refuses wrong keys, damage, vault files, and stale selections', async () => {
@@ -635,6 +647,17 @@ test('browser verification refuses wrong keys, damage, vault files, and stale se
   assert.equal(app.elements.get('verify-status').textContent, 'No file verified.');
   assert.equal(app.elements.get('verify-passphrase').value, '');
   assert.equal(app.saved.get(key), undefined);
+
+  const pending = selectVerificationFile(app, raw);
+  let finishRead;
+  pending.arrayBuffer = () => new Promise(resolve => { finishRead = resolve; });
+  app.context.document.getElementById('verify-passphrase').value = passphrase;
+  const outdated = app.read('verifyBackupFile()');
+  app.send('A newer edit while checking the backup');
+  finishRead(Uint8Array.from(Buffer.from(raw)).buffer);
+  assert.equal(await outdated, false);
+  assert.match(app.elements.get('verify-status').textContent, /Page changed. Recheck/);
+  assert.equal(app.elements.get('verify-passphrase').value, '');
 });
 
 test('independent backup CLI checks genuine plain and encrypted exports without printing memory text', async () => {
