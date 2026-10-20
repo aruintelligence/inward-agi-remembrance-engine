@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
+const {spawnSync} = require('node:child_process');
 const {chromium} = require('playwright');
 
 const pageHtml = fs.readFileSync(path.join(__dirname, '..', 'inward-agi-remembrance-engine-v11.html'));
@@ -129,9 +130,17 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       const downloadPromise = page.waitForEvent('download');
       await page.getByRole('button', {name: 'Download encrypted JSON'}).click();
       const download = await downloadPromise;
-      const downloaded = fs.readFileSync(await download.path(), 'utf8');
+      const downloadedPath = await download.path();
+      const downloaded = fs.readFileSync(downloadedPath, 'utf8');
       assert.equal(JSON.parse(downloaded).format, 'aru-remembrance-encrypted-v1');
       assert.doesNotMatch(downloaded, /Corvallis sunrise|A second private/);
+      const verified = spawnSync(process.execPath,
+        [path.join(__dirname, '..', 'tools', 'verify_backup.cjs'), downloadedPath, '--passphrase-stdin'],
+        {input: portablePassword, encoding: 'utf8'});
+      assert.equal(verified.status, 0, verified.stderr);
+      assert.equal(JSON.parse(verified.stdout).memories, 2);
+      assert.equal(JSON.parse(verified.stdout).integrity, 'aes-256-gcm-tag-verified');
+      assert.doesNotMatch(verified.stdout, /Corvallis sunrise|A second private/);
 
       await page.getByText('Review and remove saved memories').click();
       await page.getByRole('button', {name: 'Review removal of memory 1', exact: true}).click();

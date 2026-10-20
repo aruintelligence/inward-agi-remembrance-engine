@@ -5,7 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const os = require('node:os');
 const { spawnSync } = require('node:child_process');
-const { webcrypto, pbkdf2Sync, createDecipheriv } = require('node:crypto');
+const { webcrypto, pbkdf2Sync, createDecipheriv, createHash } = require('node:crypto');
 
 const html = fs.readFileSync(path.join(__dirname, '..', 'inward-agi-remembrance-engine-v11.html'), 'utf8');
 const source = html.match(/<script>([\s\S]*?)<\/script>/)[1];
@@ -527,6 +527,92 @@ test('encrypted export is private, randomized, independently decryptable, and re
   assert.match(receiver.elements.get('import-summary').textContent, /1 incoming memories/);
   assert.equal(receiver.read('applyReviewedImport()'), true);
   assert.equal(boot(saved).read('userHistory[0].text'), 'A private café memory');
+});
+
+test('independent backup CLI checks genuine plain and encrypted exports without printing memory text', async () => {
+  const app = boot();
+  const privateText = 'A private Corvallis backup memory';
+  const passphrase = 'a unique offline verification passphrase';
+  app.send(privateText);
+  app.read('exportState()');
+  const plain = await app.exports[0].text();
+  app.context.document.getElementById('export-passphrase').value = passphrase;
+  app.context.document.getElementById('export-confirm').value = passphrase;
+  assert.equal(await app.read('exportEncryptedState()'), true);
+  const encrypted = await app.exports[1].text();
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'remembrance-verifier-'));
+  const verifier = path.join(__dirname, '..', 'tools', 'verify_backup.cjs');
+  try {
+    const file = path.join(folder, 'backup.json');
+    fs.writeFileSync(file, plain, {mode: 0o600});
+    let result = spawnSync(process.execPath, [verifier, file], {encoding: 'utf8'});
+    assert.equal(result.status, 0, result.stderr);
+    let report = JSON.parse(result.stdout);
+    assert.equal(report.result, 'valid-structure');
+    assert.equal(report.integrity, 'none');
+    assert.equal(report.memories, 1);
+    assert.equal(report.field_values, 720);
+    assert.equal(report.file_sha256, createHash('sha256').update(plain).digest('hex'));
+    assert.doesNotMatch(result.stdout + result.stderr, /A private Corvallis|offline verification passphrase/);
+
+    fs.writeFileSync(file, encrypted, {mode: 0o600});
+    result = spawnSync(process.execPath, [verifier, file], {encoding: 'utf8'});
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /requires a terminal or --passphrase-stdin/);
+    assert.equal(result.stdout, '');
+    result = spawnSync(process.execPath, [verifier, file, '--passphrase-stdin'],
+      {input: passphrase, encoding: 'utf8'});
+    assert.equal(result.status, 0, result.stderr);
+    report = JSON.parse(result.stdout);
+    assert.equal(report.format, 'aru-remembrance-encrypted-v1');
+    assert.equal(report.integrity, 'aes-256-gcm-tag-verified');
+    assert.equal(report.memories, 1);
+    assert.equal(report.file_sha256, createHash('sha256').update(encrypted).digest('hex'));
+    assert.doesNotMatch(result.stdout + result.stderr, /A private Corvallis|offline verification passphrase/);
+  } finally {
+    fs.rmSync(folder, {recursive: true, force: true});
+  }
+});
+
+test('independent backup CLI rejects wrong keys, tampering, unsupported vaults, and invalid state', async () => {
+  const app = boot();
+  const passphrase = 'a separate verification passphrase';
+  app.send('A private recovery value');
+  app.context.document.getElementById('export-passphrase').value = passphrase;
+  app.context.document.getElementById('export-confirm').value = passphrase;
+  await app.read('exportEncryptedState()');
+  const envelope = JSON.parse(await app.exports[0].text());
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'remembrance-verifier-invalid-'));
+  const verifier = path.join(__dirname, '..', 'tools', 'verify_backup.cjs');
+  const file = path.join(folder, 'untrusted.json');
+  function checkFailure(bytes, input, pattern) {
+    fs.writeFileSync(file, bytes, {mode: 0o600});
+    const before = fs.readFileSync(file);
+    const args = input === undefined ? [verifier, file] : [verifier, file, '--passphrase-stdin'];
+    const result = spawnSync(process.execPath, args, {input, encoding: 'utf8'});
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, '');
+    assert.match(result.stderr, pattern);
+    assert.doesNotMatch(result.stderr, /A private recovery value|separate verification passphrase/);
+    assert.deepEqual(fs.readFileSync(file), before);
+  }
+  try {
+    const raw = JSON.stringify(envelope);
+    checkFailure(raw, 'wrong but long enough passphrase', /wrong passphrase or altered file/);
+    const sealed = Buffer.from(envelope.ciphertext, 'base64');
+    sealed[0] ^= 1;
+    checkFailure(JSON.stringify({...envelope, ciphertext: sealed.toString('base64')}), passphrase,
+      /wrong passphrase or altered file/);
+    checkFailure(JSON.stringify({...envelope, iterations: 1}), passphrase, /Encrypted envelope is invalid/);
+    checkFailure(JSON.stringify({...envelope, salt: '!invalid'}), passphrase, /Encrypted envelope is invalid/);
+    checkFailure(JSON.stringify({...app.read('stateSnapshot()'), field: []}), undefined, /Field snapshot is invalid/);
+    checkFailure(Buffer.from([0xff, 0xfe]), undefined, /not valid UTF-8/);
+    checkFailure('x'.repeat(512 * 1024 + 1), undefined, /exceeds 512 KB/);
+    assert.equal(await enableVault(app), true);
+    checkFailure(app.saved.get(key), passphrase, /not a portable v1 export/);
+  } finally {
+    fs.rmSync(folder, {recursive: true, force: true});
+  }
 });
 
 test('wrong passphrase, tampering, and malformed encrypted files never replace state', async () => {

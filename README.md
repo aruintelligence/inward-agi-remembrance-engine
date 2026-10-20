@@ -33,6 +33,7 @@ It explores a memory-first design question:
 - Client-side operation with no application backend
 - Unencrypted JSON export, optional passphrase-encrypted portable copy, and local erasure controls
 - An encrypted export freshness check that refuses a download when the session changes during encryption
+- A separate, read-only backup verifier for plain and encrypted portable exports
 - Reviewed JSON restore with complete v1 validation, visible incoming entries, and stale-state protection
 - A selective merge that shows current and incoming sources, detects exact duplicates, and blocks over-capacity plans
 - Bundled styles and a restrictive Content Security Policy; the app loads no remote runtime assets
@@ -63,6 +64,15 @@ If a saved value changes in another tab, is unreadable, or a write fails after a
 
 Use **Download unencrypted JSON** to keep a readable snapshot, including your entered text. For a portable copy protected by a passphrase, enter and confirm a unique passphrase of 16–1024 characters and choose **Download encrypted JSON**. Keep the passphrase separately: this app cannot recover it. Encryption takes time. If the memory changes or the vault locks before encryption finishes, the app refuses that download and asks you to retry with the latest session. It also refuses a second encrypted export while one is being prepared. The status reports when a download starts; check your downloads to confirm the file arrived. The passphrase fields are cleared after each attempt. A downloaded copy is separate from this browser's saved state.
 
+To check a downloaded file without loading it into the app, run the separate read-only verifier with Node.js 22:
+
+```bash
+node tools/verify_backup.cjs inward-remembrance-state.json
+node tools/verify_backup.cjs inward-remembrance-encrypted.json
+```
+
+For an encrypted file, type its passphrase at the hidden terminal prompt. Automation may supply the exact passphrase bytes on standard input with `--passphrase-stdin`; do not put the passphrase in a command-line argument. The verifier prints the export format, memory and label counts, saved date, SHA-256 of the exact file, and whether its AES-GCM tag passed. It never prints entry text or writes a file. It rejects a wrong passphrase, altered ciphertext, incomplete state, oversize files, and the browser vault format, which is not a portable download. A valid tag confirms the encrypted file was opened with that passphrase, not who made the file. The saved date and text are user-editable; the file hash identifies bytes, not authorship or truth. A plain JSON export has no cryptographic authentication.
+
 To encrypt this browser's future saves, first keep an encrypted download elsewhere, then use **Encrypt browser state** with a long, unique vault passphrase. This opt-in step atomically replaces this app's plaintext `localStorage` value with an authenticated encrypted envelope. **Lock browser vault** waits for pending saves, clears the app's loaded memory, and requires the passphrase on the next unlock or reload. A wrong passphrase or damaged vault is never replaced with a plaintext save. A saved value changed by another tab is preserved instead of silently overwritten. You can still choose an explicitly labeled unencrypted download while unlocked. If the passphrase is lost, the app cannot recover the vault; **Erase this browser's vault** deletes its saved value after confirmation. Earlier unencrypted downloads and device backups are unaffected by enabling the vault.
 
 To change the current browser vault passphrase while it is unlocked, open **Change browser vault passphrase**, enter the current passphrase and a different new one twice, then choose **Change vault passphrase**. The app waits for pending encrypted saves, checks the current passphrase against the saved vault, and replaces that complete encrypted value with a new salt, key, and IV in one browser storage write. A wrong current passphrase, blocked write, or changed saved value leaves the earlier vault intact. After success, the old passphrase cannot open this browser's new saved value; other open tabs must unlock the changed vault. Previously downloaded copies and device backups remain separate and may still require the old passphrase. Keep a new encrypted backup after rotating.
@@ -89,7 +99,7 @@ Run the local regression suite with Node.js 22 and Python 3 available:
 node tests/state.test.cjs
 ```
 
-It covers reload and retrieval, sparse and ambiguous recall, independent Python verification, the initial empty-state label, response gating, malformed and blocked storage, recovery after a stale-tab change or failed write, both export formats and freshness under delayed encryption, vault migration, locking and passphrase rotation, independent decryption, wrong passphrases, tampering, encrypted restore and merge, reviewed individual removal, full-capacity input refusal, deduplication, stale review, and confirmed or refused erasure. [The retrieval protocol](RETRIEVAL_PROTOCOL.md) states the exact rule and shows how to recheck an unencrypted exported state without importing browser code. Run `python3 tools/challenge_retrieval.py` to check the labeled sparse-overlap and positive examples; the challenge set does not measure performance on real user questions.
+It covers reload and retrieval, sparse and ambiguous recall, independent Python verification, the initial empty-state label, response gating, malformed and blocked storage, recovery after a stale-tab change or failed write, both export formats and freshness under delayed encryption, independent backup CLI checks and tamper rejection, vault migration, locking and passphrase rotation, independent decryption, wrong passphrases, tampering, encrypted restore and merge, reviewed individual removal, full-capacity input refusal, deduplication, stale review, and confirmed or refused erasure. [The retrieval protocol](RETRIEVAL_PROTOCOL.md) states the exact rule and shows how to recheck an unencrypted exported state without importing browser code. Run `python3 tools/challenge_retrieval.py` to check the labeled sparse-overlap and positive examples; the challenge set does not measure performance on real user questions.
 
 To rebuild the committed stylesheet after editing classes, install the pinned build dependency and check the result:
 
@@ -101,7 +111,7 @@ npm test
 
 The build uses Tailwind only at development time. CI repeats the build and fails if the generated HTML differs from the committed file.
 
-The browser regression opens the committed HTML on a local server in headless Chromium. It exercises real Web Crypto and `localStorage`, pause and resume under default and reduced-motion settings, lock, unlock and passphrase rotation, an encrypted download and rejection of a stale export during delayed encryption, reviewed removal in both vault and plaintext modes, full-capacity and stale-tab draft preservation, recovery export, blocked and successful erasure, and reviewed restore in a separate browser context. To run it locally after `npm ci`:
+The browser regression opens the committed HTML on a local server in headless Chromium. It exercises real Web Crypto and `localStorage`, pause and resume under default and reduced-motion settings, lock, unlock and passphrase rotation, an encrypted download independently checked by the backup CLI and rejection of a stale export during delayed encryption, reviewed removal in both vault and plaintext modes, full-capacity and stale-tab draft preservation, recovery export, blocked and successful erasure, and reviewed restore in a separate browser context. To run it locally after `npm ci`:
 
 ```bash
 npx playwright install --with-deps --only-shell chromium
