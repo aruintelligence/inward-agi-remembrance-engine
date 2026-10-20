@@ -608,6 +608,86 @@ test('missing Web Crypto refuses encrypted download without a plaintext fallback
   assert.equal(app.elements.get('export-passphrase').value, '');
 });
 
+test('encrypted export rejects a changed session instead of delivering an outdated backup', async () => {
+  const app = boot();
+  const passphrase = 'a unique portable backup passphrase';
+  app.send('Original backup memory');
+  const password = app.context.document.getElementById('export-passphrase');
+  const confirmation = app.context.document.getElementById('export-confirm');
+  password.value = passphrase;
+  confirmation.value = passphrase;
+  let announce;
+  const started = new Promise(resolve => { announce = resolve; });
+  app.context.announceEncryption = announce;
+  app.read('globalThis.originalEncryptPortableState = encryptPortableState; encryptPortableState = async () => { announceEncryption(); return new Promise(resolve => { globalThis.finishEncryption = resolve; }); }');
+  const pending = app.read('exportEncryptedState()');
+  await started;
+  assert.match(app.elements.get('crypto-status').textContent, /Preparing encrypted copy of 1 memory/);
+  assert.equal(await app.read('exportEncryptedState()'), false);
+  assert.match(app.elements.get('crypto-status').textContent, /already being prepared/);
+  app.send('New memory during encryption');
+  app.context.finishEncryption({format: 'never downloaded'});
+  assert.equal(await pending, false);
+  assert.equal(app.exports.length, 0);
+  assert.match(app.elements.get('crypto-status').textContent, /Session changed while encrypting/);
+  assert.equal(password.value, '');
+  assert.equal(confirmation.value, '');
+
+  app.read('encryptPortableState = globalThis.originalEncryptPortableState');
+  password.value = passphrase;
+  confirmation.value = passphrase;
+  assert.equal(await app.read('exportEncryptedState()'), true);
+  assert.equal(app.exports.length, 1);
+  const encrypted = await app.exports[0].text();
+  const restored = JSON.parse(await app.read(`decodeImportText(${JSON.stringify(encrypted)}, ${JSON.stringify(passphrase)})`));
+  assert.deepEqual(restored.user_history.map(entry => entry.text),
+    ['Original backup memory', 'New memory during encryption']);
+});
+
+test('locking a vault during encryption cannot start a portable download afterward', async () => {
+  const app = boot();
+  app.send('Protected backup memory');
+  assert.equal(await enableVault(app), true);
+  app.context.document.getElementById('export-passphrase').value = 'a second portable backup passphrase';
+  app.context.document.getElementById('export-confirm').value = 'a second portable backup passphrase';
+  let announce;
+  const started = new Promise(resolve => { announce = resolve; });
+  app.context.announceEncryption = announce;
+  app.read('encryptPortableState = async () => { announceEncryption(); return new Promise(resolve => { globalThis.finishEncryption = resolve; }); }');
+  const pending = app.read('exportEncryptedState()');
+  await started;
+  assert.equal(await app.read('lockVault()'), true);
+  assert.equal(app.read('vaultLocked'), true);
+  app.context.finishEncryption({format: 'never downloaded'});
+  assert.equal(await pending, false);
+  assert.equal(app.exports.length, 0);
+  assert.match(app.elements.get('crypto-status').textContent, /Session changed while encrypting/);
+  assert.equal(app.elements.get('export-passphrase').value, '');
+});
+
+test('a queued encrypted save keeps its original ledger while a later interaction updates labels', async () => {
+  const app = boot();
+  assert.equal(await enableVault(app), true);
+  let announce;
+  const sealing = new Promise(resolve => { announce = resolve; });
+  app.context.announceSealing = announce;
+  app.read('globalThis.originalSealVaultState = sealVaultState; sealVaultState = async (state, ...args) => { if (!globalThis.firstQueuedSnapshot) { globalThis.firstQueuedSnapshot = state; announceSealing(); await new Promise(resolve => { globalThis.releaseFirstSeal = resolve; }); } return globalThis.originalSealVaultState(state, ...args); }');
+  app.send('Corvallis sunrise begins here');
+  await sealing;
+  assert.equal(app.read('firstQueuedSnapshot.user_history.length'), 1);
+  assert.equal(app.read('firstQueuedSnapshot.ledger_entries.length'), 0);
+  app.send('Can you recall Corvallis sunrise?');
+  assert.equal(app.read('ledgerEntries.length'), 1);
+  assert.equal(app.read('firstQueuedSnapshot.ledger_entries.length'), 0);
+  app.context.releaseFirstSeal();
+  await app.read('vaultWriteQueue');
+  assert.equal(app.read('storageConflict'), false);
+  const restored = boot(app.saved);
+  assert.equal(await unlockVault(restored), true);
+  assert.equal(restored.read('userHistory.length'), 2);
+  assert.equal(restored.read('ledgerEntries.length'), 1);
+});
+
 test('opt-in vault migrates an existing memory, seals later saves, and unlocks after reload', async () => {
   const saved = new Map();
   const app = boot(saved);

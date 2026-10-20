@@ -249,6 +249,46 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       assert.deepEqual(JSON.parse(latestSaved).user_history.map(entry => entry.text),
         ['Shared browser entry', 'Writer has the latest value']);
       await conflictContext.close();
+      const exportContext = await browser.newContext({acceptDownloads: true});
+      const exportPage = await exportContext.newPage();
+      exportPage.on('pageerror', error => pageErrors.push(error.message));
+      exportPage.on('request', request => {
+        if (/^https?:/.test(request.url()) && !request.url().startsWith(origin + '/')) remoteRequests.push(request.url());
+      });
+      await exportPage.goto(origin + '/engine.html');
+      await exportPage.locator('#input').fill('Before portable export');
+      await exportPage.getByRole('button', {name: 'SEND TO REMEMBRANCE'}).click();
+      await exportPage.evaluate(() => {
+        window.originalEncryptPortableState = encryptPortableState;
+        window.originalDownloadJson = downloadJson;
+        window.downloadStarts = 0;
+        downloadJson = (...args) => { window.downloadStarts++; return window.originalDownloadJson(...args); };
+        window.exportStarted = new Promise(resolve => { window.markExportStarted = resolve; });
+        encryptPortableState = async (...args) => {
+          window.markExportStarted();
+          await new Promise(resolve => { window.finishExport = resolve; });
+          return window.originalEncryptPortableState(...args);
+        };
+      });
+      await exportPage.locator('#export-passphrase').fill(portablePassword);
+      await exportPage.locator('#export-confirm').fill(portablePassword);
+      await exportPage.getByRole('button', {name: 'Download encrypted JSON'}).click();
+      await exportPage.evaluate(() => window.exportStarted);
+      await exportPage.locator('#input').fill('Added before encryption finished');
+      await exportPage.getByRole('button', {name: 'SEND TO REMEMBRANCE'}).click();
+      await exportPage.evaluate(() => { window.finishExport(); encryptPortableState = window.originalEncryptPortableState; });
+      await exportPage.locator('#crypto-status').filter({hasText: /Session changed while encrypting/}).waitFor();
+      assert.equal(await exportPage.evaluate(() => window.downloadStarts), 0);
+      assert.equal(await exportPage.locator('#export-passphrase').inputValue(), '');
+      await exportPage.locator('#export-passphrase').fill(portablePassword);
+      await exportPage.locator('#export-confirm').fill(portablePassword);
+      const freshDownloadPromise = exportPage.waitForEvent('download');
+      await exportPage.getByRole('button', {name: 'Download encrypted JSON'}).click();
+      const freshBackup = fs.readFileSync(await (await freshDownloadPromise).path(), 'utf8');
+      assert.equal(await exportPage.evaluate(() => window.downloadStarts), 1);
+      assert.equal(JSON.parse(freshBackup).format, 'aru-remembrance-encrypted-v1');
+      assert.match(await exportPage.locator('#crypto-status').textContent(), /copy started for 2 memories/);
+      await exportContext.close();
       const reducedContext = await browser.newContext({reducedMotion: 'reduce'});
       const reducedPage = await reducedContext.newPage();
       reducedPage.on('pageerror', error => pageErrors.push(error.message));

@@ -390,6 +390,7 @@
     let vaultTransition = false;
     let vaultWriteQueue = Promise.resolve();
     let vaultPendingWrites = 0;
+    let portableExportInProgress = false;
     let motionPaused = !!globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
     let frameRequestId = null;
 
@@ -442,7 +443,7 @@
         scope: 'browser-local symbolic simulation',
         saved_at: new Date().toISOString(),
         user_history: userHistory.map(({text, ts}) => ({text, ts})),
-        ledger_entries: ledgerEntries,
+        ledger_entries: ledgerEntries.map(({text, ts}) => ({text, ts})),
         field: Array.from(mu)
       };
     }
@@ -865,21 +866,38 @@
     }
 
     async function exportEncryptedState() {
-      if (vaultLocked || vaultTransition) return;
+      if (vaultLocked || vaultTransition) return false;
       const password = document.getElementById('export-passphrase');
       const confirmation = document.getElementById('export-confirm');
       const status = document.getElementById('crypto-status');
+      if (portableExportInProgress) {
+        status.textContent = 'An encrypted copy is already being prepared. Wait for it to finish.';
+        return false;
+      }
+      portableExportInProgress = true;
       const passphrase = password.value;
+      const revision = stateRevision;
+      const session = vaultSession;
       try {
         if (passphrase !== confirmation.value) throw new Error('Passphrases do not match.');
-        const envelope = await encryptPortableState(stateSnapshot(), passphrase);
+        const snapshot = stateSnapshot();
+        const count = snapshot.user_history.length;
+        const unit = count === 1 ? 'memory' : 'memories';
+        status.textContent = `Preparing encrypted copy of ${count} ${unit}…`;
+        const envelope = await encryptPortableState(snapshot, passphrase);
+        if (revision !== stateRevision || vaultLocked || vaultTransition || session !== vaultSession) {
+          throw new Error('Session changed while encrypting. No copy was started; retry with the latest state.');
+        }
         downloadJson(envelope, 'inward-remembrance-encrypted.json');
-        status.textContent = 'Encrypted copy downloaded. Keep its passphrase separately; it cannot be recovered here.';
+        status.textContent = `Encrypted copy started for ${count} ${unit}. Check your downloads and keep the passphrase separately.`;
+        return true;
       } catch (error) {
         status.textContent = error.message || 'Encrypted download failed.';
+        return false;
       } finally {
         password.value = '';
         confirmation.value = '';
+        portableExportInProgress = false;
       }
     }
 
