@@ -398,9 +398,9 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       await exportPage.locator('#import-status').filter({hasText: /Review complete/}).waitFor();
       await exportPage.evaluate(() => {
         window.originalEncryptPortableState = encryptPortableState;
-        window.originalDownloadJson = downloadJson;
+        window.originalDownloadJsonText = downloadJsonText;
         window.downloadStarts = 0;
-        downloadJson = (...args) => { window.downloadStarts++; return window.originalDownloadJson(...args); };
+        downloadJsonText = (...args) => { window.downloadStarts++; return window.originalDownloadJsonText(...args); };
         window.exportStarted = new Promise(resolve => { window.markExportStarted = resolve; });
         encryptPortableState = async (...args) => {
           window.markExportStarted();
