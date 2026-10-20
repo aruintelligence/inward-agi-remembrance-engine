@@ -96,6 +96,11 @@ function selectVerificationFile(app, raw) {
   return file;
 }
 
+function importFile(raw, name = 'selected.json') {
+  const bytes = Buffer.from(raw);
+  return {name, size: bytes.length, arrayBuffer: async () => Uint8Array.from(bytes).buffer};
+}
+
 const vaultPassword = 'unique browser vault passphrase 2026';
 
 async function enableVault(app, passphrase = vaultPassword) {
@@ -555,9 +560,7 @@ test('encrypted export is private, randomized, independently decryptable, and re
   const receiver = boot(saved);
   receiver.send('Keep until approved');
   const before = saved.get(key);
-  receiver.context.document.getElementById('state-file').files = [{
-    name: 'encrypted.json', size: new Blob([raw]).size, text: async () => raw
-  }];
+  receiver.context.document.getElementById('state-file').files = [importFile(raw, 'encrypted.json')];
   receiver.context.document.getElementById('import-passphrase').value = passphrase.normalize('NFD');
   await receiver.read('reviewImportFile()');
   assert.equal(receiver.elements.get('import-passphrase').value, '');
@@ -772,7 +775,7 @@ test('wrong passphrase, tampering, and malformed encrypted files never replace s
   const importPassword = app.context.document.getElementById('import-passphrase');
   async function attempt(data, passphrase) {
     const raw = JSON.stringify(data);
-    file.files = [{name: 'encrypted.json', size: new Blob([raw]).size, text: async () => raw}];
+    file.files = [importFile(raw, 'encrypted.json')];
     importPassword.value = passphrase;
     await app.read('reviewImportFile()');
     assert.equal(importPassword.value, '');
@@ -799,10 +802,36 @@ test('wrong passphrase, tampering, and malformed encrypted files never replace s
   assert.equal(app.saved.get(key), before);
 });
 
+test('restore and verifier reject damaged UTF-8 bytes before reviewing a memory', async () => {
+  const donor = boot();
+  donor.send('Corvallis byte marker');
+  const damaged = Buffer.from(JSON.stringify(donor.read('stateSnapshot()')));
+  const marker = damaged.indexOf(Buffer.from('Corvallis'));
+  assert.ok(marker > 0);
+  damaged[marker] = 0xff; // File.text() would silently turn this into a replacement character.
+  const app = boot();
+  app.send('Existing memory remains');
+  const saved = app.saved.get(key);
+  app.context.document.getElementById('state-file').files = [importFile(damaged, 'damaged.json')];
+  await app.read('reviewImportFile()');
+  assert.match(app.elements.get('import-status').textContent, /File is not valid UTF-8/);
+  assert.equal(app.read('pendingImport'), null);
+  assert.equal(app.saved.get(key), saved);
+  app.context.document.getElementById('verify-file').files = [importFile(damaged, 'damaged.json')];
+  app.read('resetBackupVerification()');
+  assert.equal(await app.read('verifyBackupFile()'), false);
+  assert.match(app.elements.get('verify-status').textContent, /File is not valid UTF-8/);
+
+  app.context.document.getElementById('import-passphrase').value = 'old file passphrase';
+  app.read('resetImportSelection()');
+  assert.equal(app.elements.get('import-passphrase').value, '');
+  assert.equal(app.saved.get(key), saved);
+});
+
 test('an interaction during encrypted decoding invalidates the pending review', async () => {
   const app = boot();
   const raw = JSON.stringify(app.read('stateSnapshot()'));
-  app.context.document.getElementById('state-file').files = [{name: 'delayed.json', size: 100, text: async () => raw}];
+  app.context.document.getElementById('state-file').files = [importFile(raw, 'delayed.json')];
   let signalDecode;
   const decoding = new Promise(resolve => { signalDecode = resolve; });
   app.context.signalDecode = signalDecode;
@@ -1147,9 +1176,7 @@ test('an encrypted portable file restores into a separately encrypted browser va
 
   const receiver = boot();
   assert.equal(await enableVault(receiver), true);
-  receiver.context.document.getElementById('state-file').files = [{
-    name: 'portable.json', size: new Blob([raw]).size, text: async () => raw
-  }];
+  receiver.context.document.getElementById('state-file').files = [importFile(raw, 'portable.json')];
   receiver.context.document.getElementById('import-passphrase').value = 'portable copy passphrase 2026';
   await receiver.read('reviewImportFile()');
   assert.equal(receiver.read('pendingImport !== null'), true);
@@ -1437,9 +1464,7 @@ test('reviewed transfer restores the exact exported memory and field after expli
   const receiver = boot(saved);
   receiver.send('A different local memory');
   const before = saved.get(key);
-  receiver.context.document.getElementById('state-file').files = [{
-    name: 'transfer.json', size: new Blob([raw]).size, text: async () => raw
-  }];
+  receiver.context.document.getElementById('state-file').files = [importFile(raw, 'transfer.json')];
   await receiver.read('reviewImportFile()');
   assert.equal(receiver.read('pendingImport !== null'), true);
   assert.equal(saved.get(key), before);
@@ -1505,12 +1530,13 @@ test('a later interaction, different file, or another tab makes the review stale
   assert.equal(app.saved.get(key), otherTab);
   assert.match(app.elements.get('import-status').textContent, /another tab/);
 
-  const file = {name: 'old.json', size: 100, text: () => new Promise(resolve => { file.resolve = resolve; })};
+  const file = importFile(raw, 'old.json');
+  file.arrayBuffer = () => new Promise(resolve => { file.resolve = resolve; });
   app.context.document.getElementById('state-file').files = [file];
   const reading = app.read('reviewImportFile()');
   app.elements.get('state-file').files = [{name: 'new.json'}];
   app.read("cancelImportReview('Selection changed.')");
-  file.resolve(raw);
+  file.resolve(Uint8Array.from(Buffer.from(raw)).buffer);
   await reading;
   assert.equal(app.read('pendingImport'), null);
   assert.equal(app.saved.get(key), otherTab);

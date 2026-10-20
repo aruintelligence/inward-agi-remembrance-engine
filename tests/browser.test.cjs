@@ -167,6 +167,15 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       const receivingPage = await receiver.newPage();
       receivingPage.on('pageerror', error => pageErrors.push(error.message));
       await receivingPage.goto(origin + '/engine.html');
+      const damagedState = Buffer.from(JSON.stringify({...JSON.parse(plain),
+        user_history: [{text: 'Corvallis marker for invalid bytes', ts: 1}]}));
+      damagedState[damagedState.indexOf(Buffer.from('Corvallis marker'))] = 0xff;
+      await receivingPage.locator('#state-file').setInputFiles({
+        name: 'damaged.json', mimeType: 'application/json', buffer: damagedState
+      });
+      await receivingPage.getByRole('button', {name: 'Review selected JSON'}).click();
+      await receivingPage.locator('#import-status').filter({hasText: /File is not valid UTF-8/}).waitFor();
+      assert.equal(await receivingPage.evaluate(key => localStorage.getItem(key), storageKey), null);
       await receivingPage.locator('#state-file').setInputFiles({
         name: 'portable.json', mimeType: 'application/json', buffer: Buffer.from(downloaded)
       });

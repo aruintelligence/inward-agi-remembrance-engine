@@ -257,7 +257,7 @@
           <div class="mt-4 border-t border-white/10 pt-4">
             <label for="state-file" class="tiny text-cyan-300 block mb-2">Move your memory to this browser</label>
             <p class="text-slate-300 mb-3">Choose a JSON export from this app. For an encrypted file, enter its passphrase. Review entries before replacing or merging. The file stays on this device.</p>
-            <input id="state-file" type="file" accept=".json,application/json" onchange="cancelImportReview('Selection changed. Review the new file before restoring.')" class="block w-full min-w-0 text-slate-200 file:mr-3 file:rounded-lg file:border-0 file:bg-cyan-900 file:px-3 file:py-2 file:text-cyan-100">
+            <input id="state-file" type="file" accept=".json,application/json" onchange="resetImportSelection()" class="block w-full min-w-0 text-slate-200 file:mr-3 file:rounded-lg file:border-0 file:bg-cyan-900 file:px-3 file:py-2 file:text-cyan-100">
             <label for="import-passphrase" class="block mt-3 text-slate-200">Passphrase for encrypted file
               <input id="import-passphrase" type="password" autocomplete="off" maxlength="1024" class="mt-1 w-full rounded-xl border border-white/20 bg-black/20 px-3 py-2 text-slate-100">
             </label>
@@ -623,6 +623,11 @@
         byte => byte.toString(16).padStart(2, '0')).join('');
     }
 
+    function decodePortableFileBytes(bytes) {
+      try { return new TextDecoder('utf-8', {fatal: true, ignoreBOM: true}).decode(bytes); }
+      catch (_) { throw new Error('File is not valid UTF-8.'); }
+    }
+
     function exportState() {
       if (vaultLocked || vaultTransition) return;
       downloadJson(stateSnapshot(), 'inward-remembrance-state.json');
@@ -978,7 +983,7 @@
         const bytes = await file.arrayBuffer();
         if (!isCurrent()) return false;
         if (bytes.byteLength > MAX_ENCRYPTED_BYTES) throw new Error('File exceeds the 512 KB limit.');
-        const raw = new TextDecoder('utf-8', {fatal: true}).decode(bytes);
+        const raw = decodePortableFileBytes(bytes);
         let parsed;
         try { parsed = JSON.parse(raw); } catch (_) { throw new Error('File is not valid JSON.'); }
         const encrypted = !!(parsed && typeof parsed === 'object' &&
@@ -1019,6 +1024,11 @@
       document.getElementById('merge-entries').replaceChildren();
       document.getElementById('merge-commit').disabled = true;
       document.getElementById('import-status').textContent = message;
+    }
+
+    function resetImportSelection() {
+      cancelImportReview('Selection changed. Review the new file before restoring.');
+      document.getElementById('import-passphrase').value = '';
     }
 
     // Read only the documented v1 export shape. Reject incomplete, oversized,
@@ -1171,18 +1181,21 @@
       const revision = stateRevision;
       const passphrase = passphraseField.value;
       try {
-        const raw = await file.text();
+        const bytes = await file.arrayBuffer();
         if (generation !== importGeneration || revision !== stateRevision ||
             document.getElementById('state-file').files?.[0] !== file) return;
+        if (bytes.byteLength > MAX_ENCRYPTED_BYTES) throw new Error('File exceeds the 512 KB limit.');
+        const raw = decodePortableFileBytes(bytes);
         const plaintext = await decodeImportText(raw, passphrase);
         if (generation !== importGeneration || revision !== stateRevision ||
             document.getElementById('state-file').files?.[0] !== file) return;
+        passphraseField.value = '';
         reviewImportText(plaintext, file.name);
       } catch (error) {
         if (generation === importGeneration) document.getElementById('import-status').textContent =
           `Review refused: ${error.message || 'Could not read the selected file.'}`;
       } finally {
-        passphraseField.value = '';
+        if (generation === importGeneration) passphraseField.value = '';
       }
     }
 
