@@ -273,6 +273,13 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       await exportPage.goto(origin + '/engine.html');
       await exportPage.locator('#input').fill('Before portable export');
       await exportPage.getByRole('button', {name: 'SEND TO REMEMBRANCE'}).click();
+      const incoming = await exportPage.evaluate(() => ({...stateSnapshot(),
+        user_history: [{text: 'Incoming reviewed memory', ts: Date.now()}]}));
+      await exportPage.locator('#state-file').setInputFiles({
+        name: 'incoming.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(incoming))
+      });
+      await exportPage.getByRole('button', {name: 'Review selected JSON'}).click();
+      await exportPage.locator('#import-status').filter({hasText: /Review complete/}).waitFor();
       await exportPage.evaluate(() => {
         window.originalEncryptPortableState = encryptPortableState;
         window.originalDownloadJson = downloadJson;
@@ -290,6 +297,12 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       await exportPage.getByRole('button', {name: 'Download encrypted JSON'}).click();
       await exportPage.evaluate(() => window.exportStarted);
       assert.equal(await exportPage.evaluate(exitWarning), true);
+      const beforeOverlap = await exportPage.evaluate(key => localStorage.getItem(key), storageKey);
+      await exportPage.locator('#import-commit').click();
+      assert.match(await exportPage.locator('#import-status').textContent(), /Restore paused/);
+      await exportPage.getByRole('button', {name: 'Erase local state'}).click();
+      assert.match(await exportPage.locator('#erase-status').textContent(), /Erase paused/);
+      assert.equal(await exportPage.evaluate(key => localStorage.getItem(key), storageKey), beforeOverlap);
       await exportPage.locator('#input').fill('Added before encryption finished');
       await exportPage.getByRole('button', {name: 'SEND TO REMEMBRANCE'}).click();
       await exportPage.evaluate(() => { window.finishExport(); encryptPortableState = window.originalEncryptPortableState; });

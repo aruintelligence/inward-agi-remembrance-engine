@@ -66,6 +66,8 @@ If a submitted change has not been saved in browser storage, or an encrypted por
 
 Use **Download unencrypted JSON** to keep a readable snapshot, including your entered text. For a portable copy protected by a passphrase, enter and confirm a unique passphrase of 16–1024 characters and choose **Download encrypted JSON**. Keep the passphrase separately: this app cannot recover it. Encryption takes time. If the memory changes or the vault locks before encryption finishes, the app refuses that download and asks you to retry with the latest session. It also refuses a second encrypted export while one is being prepared. The status reports when a download starts; check your downloads to confirm the file arrived. The passphrase fields are cleared after each attempt. A downloaded copy is separate from this browser's saved state.
 
+While an encrypted portable copy is being prepared, reviewed replacement or merge and local erasure pause without writing or reloading. Wait for the export to finish, then confirm the reviewed restore again or retry erasure. The reviewed selection stays available unless another interaction changes the local state. An unlocked vault also checks for a newly started export immediately before its asynchronous restore writes, so an overlapping operation cannot commit behind the export.
+
 To check a downloaded file without loading it into the app, run the separate read-only verifier with Node.js 22:
 
 ```bash

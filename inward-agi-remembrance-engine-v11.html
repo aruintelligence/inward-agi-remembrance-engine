@@ -1095,8 +1095,18 @@
       }
     }
 
+    function restoreBlockedByPortableExport() {
+      if (portableExportInProgress) {
+        document.getElementById('import-status').textContent =
+          'Restore paused: wait for the encrypted copy to finish, then confirm this review again.';
+        return true;
+      }
+      return false;
+    }
+
     function applyReviewedImport(mode = 'replace') {
-      if (!pendingImport || vaultLocked || vaultTransition || storageConflict) return false;
+      if (!pendingImport || vaultLocked || vaultTransition || storageConflict ||
+          restoreBlockedByPortableExport()) return false;
       const {state, current, previousRaw, revision} = pendingImport;
       if (mode !== 'replace' && mode !== 'merge') return false;
       let next = state;
@@ -1134,12 +1144,14 @@
       const session = vaultSession;
       try {
         await vaultWriteQueue;
+        if (restoreBlockedByPortableExport()) return false;
         if (session !== vaultSession || storageConflict || revision !== stateRevision ||
             localStorage.getItem(STORAGE_KEY) !== previousRaw) {
           cancelImportReview('Local state changed in this browser or another tab. Review the file again.');
           return false;
         }
         const sealed = JSON.stringify(await sealVaultState(next, session.key, session.salt));
+        if (restoreBlockedByPortableExport()) return false;
         if (session !== vaultSession || storageConflict || revision !== stateRevision ||
             localStorage.getItem(STORAGE_KEY) !== previousRaw) {
           cancelImportReview('Local state changed while encrypting. Review the file again.');
@@ -1160,6 +1172,12 @@
 
     async function eraseState() {
       if (vaultTransition) return false;
+      if (portableExportInProgress) {
+        const message = 'Erase paused: wait for the encrypted copy to finish, then try again.';
+        document.getElementById('erase-status').textContent = message;
+        document.getElementById('vault-erase-status').textContent = message;
+        return false;
+      }
       if (!window.confirm('Erase this browser\'s saved Remembrance Engine state? This cannot remove downloads, other tabs, or device backups.')) return false;
       const session = vaultSession;
       const locked = vaultLocked;

@@ -762,6 +762,102 @@ test('encrypted export rejects a changed session instead of delivering an outdat
     ['Original backup memory', 'New memory during encryption']);
 });
 
+test('reviewed plaintext restore and erasure wait for a portable export before changing storage', async () => {
+  const donor = boot();
+  donor.send('Donor memory for reviewed replacement');
+  const app = boot();
+  app.send('Current memory awaiting export');
+  const original = app.saved.get(key);
+  const passphrase = 'unique overlap test passphrase 2026';
+  assert.equal(app.read(`reviewImportText(${JSON.stringify(donor.saved.get(key))})`), true);
+  app.context.document.getElementById('export-passphrase').value = passphrase;
+  app.context.document.getElementById('export-confirm').value = passphrase;
+  let announce;
+  const started = new Promise(resolve => { announce = resolve; });
+  app.context.announceExport = announce;
+  app.read(`globalThis.originalEncryptForOverlap = encryptPortableState;
+    encryptPortableState = async (...args) => {
+      announceExport();
+      await new Promise(resolve => { globalThis.releaseExport = resolve; });
+      return originalEncryptForOverlap(...args);
+    };`);
+  const exporting = app.read('exportEncryptedState()');
+  await started;
+  assert.equal(app.read('applyReviewedImport()'), false);
+  assert.match(app.elements.get('import-status').textContent, /Restore paused/);
+  assert.notEqual(app.read('pendingImport'), null);
+  assert.equal(await app.read('eraseState()'), false);
+  assert.match(app.elements.get('erase-status').textContent, /Erase paused/);
+  assert.equal(app.saved.get(key), original);
+  assert.equal(app.window.reloaded, undefined);
+
+  app.context.releaseExport();
+  assert.equal(await exporting, true);
+  const copy = await app.exports[0].text();
+  const decoded = JSON.parse(await app.read(`decodeImportText(${JSON.stringify(copy)}, ${JSON.stringify(passphrase)})`));
+  assert.deepEqual(decoded.user_history.map(entry => entry.text), ['Current memory awaiting export']);
+  assert.equal(app.read('applyReviewedImport()'), true);
+  assert.equal(app.window.reloaded, true);
+  assert.deepEqual(JSON.parse(app.saved.get(key)).user_history.map(entry => entry.text),
+    ['Donor memory for reviewed replacement']);
+});
+
+test('a vault restore rechecks export activity after its asynchronous encryption', async () => {
+  const donor = boot();
+  donor.send('Donor memory for protected replacement');
+  const app = boot();
+  app.send('Current protected memory');
+  assert.equal(await enableVault(app), true);
+  const original = app.saved.get(key);
+  assert.equal(app.read(`reviewImportText(${JSON.stringify(donor.saved.get(key))})`), true);
+  let announce;
+  const sealing = new Promise(resolve => { announce = resolve; });
+  app.context.announceRestoreSeal = announce;
+  app.read(`globalThis.originalSealForOverlap = sealVaultState;
+    sealVaultState = async (...args) => {
+      if (!globalThis.restoreSealHeld) {
+        globalThis.restoreSealHeld = true;
+        announceRestoreSeal();
+        await new Promise(resolve => { globalThis.releaseRestoreSeal = resolve; });
+      }
+      return originalSealForOverlap(...args);
+    };`);
+  const restoring = app.read('applyReviewedImport()');
+  await sealing;
+  const passphrase = 'unique overlap test passphrase 2026';
+  app.context.document.getElementById('export-passphrase').value = passphrase;
+  app.context.document.getElementById('export-confirm').value = passphrase;
+  let announceExport;
+  const started = new Promise(resolve => { announceExport = resolve; });
+  app.context.announceExport = announceExport;
+  app.read(`globalThis.originalEncryptForOverlap = encryptPortableState;
+    encryptPortableState = async (...args) => {
+      announceExport();
+      await new Promise(resolve => { globalThis.releaseExport = resolve; });
+      return originalEncryptForOverlap(...args);
+    };`);
+  const exporting = app.read('exportEncryptedState()');
+  await started;
+  app.context.releaseRestoreSeal();
+  assert.equal(await restoring, false);
+  assert.match(app.elements.get('import-status').textContent, /Restore paused/);
+  assert.notEqual(app.read('pendingImport'), null);
+  assert.equal(app.saved.get(key), original);
+  assert.equal(app.window.reloaded, undefined);
+
+  app.context.releaseExport();
+  assert.equal(await exporting, true);
+  const copy = await app.exports[0].text();
+  const decoded = JSON.parse(await app.read(`decodeImportText(${JSON.stringify(copy)}, ${JSON.stringify(passphrase)})`));
+  assert.deepEqual(decoded.user_history.map(entry => entry.text), ['Current protected memory']);
+  assert.equal(await app.read('applyReviewedImport()'), true);
+  assert.equal(app.window.reloaded, true);
+  const latest = boot(app.saved);
+  assert.equal(await unlockVault(latest), true);
+  assert.deepEqual(Array.from(latest.read('userHistory.map(entry => entry.text)')),
+    ['Donor memory for protected replacement']);
+});
+
 test('locking a vault during encryption cannot start a portable download afterward', async () => {
   const app = boot();
   app.send('Protected backup memory');
