@@ -411,7 +411,7 @@
 
     function openBackupControls() {
       document.getElementById('state-controls').scrollIntoView?.({behavior: 'smooth', block: 'start'});
-      document.getElementById('backup-download').focus?.({preventScroll: true});
+      document.getElementById(vaultSession ? 'export-passphrase' : 'backup-download').focus?.({preventScroll: true});
     }
 
     function pauseUnsavedInput() {
@@ -425,6 +425,8 @@
       document.getElementById('recovery-panel').hidden = vaultLocked || !needsSavedStateRecovery();
       document.getElementById('storage-status').textContent = vaultLocked
         ? 'Browser vault locked. No saved memory is loaded until you unlock it.'
+        : storageConflict && vaultSession && unsavedChanges
+          ? 'Vault save conflicted or failed. This unlocked page holds unsaved changes; new input is paused. Download an encrypted portable copy before reloading to unlock the latest saved vault.'
         : storageConflict
           ? 'Browser state changed elsewhere, is unreadable, or a save failed. New input is paused; download the current session before reloading if it contains unsaved changes.'
           : !storageAvailable && lastStoredRaw !== null
@@ -466,8 +468,7 @@
           const next = JSON.stringify(await sealVaultState(snapshot, session.key, session.salt));
           if (vaultSession !== session || storageConflict) return;
           if (localStorage.getItem(STORAGE_KEY) !== session.lastRaw) {
-            storageConflict = true;
-            enterLockedState('Vault changed in another tab. Unlock the latest saved version.');
+            handleChangedVault();
             return;
           }
           localStorage.setItem(STORAGE_KEY, next);
@@ -557,6 +558,12 @@
       document.getElementById('vault-lock').hidden = false;
       document.getElementById('vault-unlock-status').textContent = message;
       showStorageStatus();
+    }
+
+    function handleChangedVault() {
+      storageConflict = true;
+      if (unsavedChanges) showStorageStatus();
+      else enterLockedState('Vault changed in another tab. Unlock the latest saved version.');
     }
 
     function loadState() {
@@ -1772,7 +1779,8 @@
       if (event.key !== STORAGE_KEY || event.newValue === lastStoredRaw) return;
       storageConflict = true;
       cancelForgetReview('Saved state changed in another tab. Reload before removing a memory.');
-      if (vaultSession || vaultLocked) enterLockedState('Vault changed in another tab. Unlock the latest saved version.');
+      if (vaultSession) handleChangedVault();
+      else if (vaultLocked) enterLockedState('Vault changed in another tab. Unlock the latest saved version.');
       else showStorageStatus();
     });
     window.addEventListener?.('beforeunload', event => {

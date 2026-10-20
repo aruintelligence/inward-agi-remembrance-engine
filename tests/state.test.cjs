@@ -1180,7 +1180,7 @@ test('vault import aborts if an interaction changes state while restore starts',
   assert.equal(reloaded.read('userHistory[0].text'), 'Newer local memory');
 });
 
-test('an unseen cross-tab write during encryption cannot be overwritten', async () => {
+test('an unseen cross-tab write preserves the unsaved vault session for recovery', async () => {
   const saved = new Map();
   const app = boot(saved);
   assert.equal(await enableVault(app), true);
@@ -1189,8 +1189,65 @@ test('an unseen cross-tab write during encryption cannot be overwritten', async 
   saved.set(key, otherTabValue);
   await app.read('vaultWriteQueue');
   assert.equal(saved.get(key), otherTabValue);
-  assert.equal(app.read('vaultLocked'), true);
-  assert.equal(app.read('userHistory.length'), 0);
+  assert.equal(app.read('vaultLocked'), false);
+  assert.equal(app.read('userHistory[0].text'), 'Write awaiting encryption');
+  assert.equal(app.elements.get('recovery-panel').hidden, false);
+  assert.equal(warnsOnExit(app), true);
+  app.read('exportState()');
+  assert.deepEqual(JSON.parse(await app.exports[0].text()).user_history.map(entry => entry.text),
+    ['Write awaiting encryption']);
+  assert.equal(saved.get(key), otherTabValue);
+});
+
+test('a vault storage event keeps a pending local edit downloadable and the newer vault intact', async () => {
+  const saved = new Map();
+  const app = boot(saved);
+  app.send('Shared vault starting memory');
+  assert.equal(await enableVault(app), true);
+  const writer = boot(saved);
+  assert.equal(await unlockVault(writer), true);
+  let announce;
+  const sealing = new Promise(resolve => { announce = resolve; });
+  app.context.announceLocalSeal = announce;
+  app.read(`globalThis.originalSealForConflict = sealVaultState;
+    sealVaultState = async (...args) => {
+      announceLocalSeal();
+      await new Promise(resolve => { globalThis.releaseLocalSeal = resolve; });
+      return originalSealForConflict(...args);
+    };`);
+  app.send('Local edit not yet saved');
+  await sealing;
+  writer.send('Another tab committed a newer vault');
+  await writer.read('vaultWriteQueue');
+  const newerVault = saved.get(key);
+  app.window.fireStorage({key, newValue: newerVault});
+  assert.equal(app.read('vaultLocked'), false);
+  assert.equal(app.read('storageConflict'), true);
+  assert.equal(app.elements.get('recovery-panel').hidden, false);
+  assert.equal(app.read('userHistory[1].text'), 'Local edit not yet saved');
+  assert.equal(warnsOnExit(app), true);
+  app.context.releaseLocalSeal();
+  await app.read('vaultWriteQueue');
+  assert.equal(saved.get(key), newerVault);
+  app.context.document.getElementById('input').value = 'A draft to copy separately';
+  assert.equal(app.read('sendToField()'), false);
+  assert.equal(app.elements.get('input').value, 'A draft to copy separately');
+
+  const passphrase = 'recovery copy unique passphrase 2026';
+  app.context.document.getElementById('export-passphrase').value = passphrase;
+  app.context.document.getElementById('export-confirm').value = passphrase;
+  assert.equal(await app.read('exportEncryptedState()'), true);
+  const copy = await app.exports[0].text();
+  const recovered = JSON.parse(await app.read(`decodeImportText(${JSON.stringify(copy)}, ${JSON.stringify(passphrase)})`));
+  assert.deepEqual(recovered.user_history.map(entry => entry.text),
+    ['Shared vault starting memory', 'Local edit not yet saved']);
+  assert.equal(warnsOnExit(app), true);
+  assert.equal(saved.get(key), newerVault);
+
+  const latest = boot(saved);
+  assert.equal(await unlockVault(latest), true);
+  assert.deepEqual(Array.from(latest.read('userHistory.map(entry => entry.text)')),
+    ['Shared vault starting memory', 'Another tab committed a newer vault']);
 });
 
 test('a forgotten vault can be erased from the locked screen without touching other keys', async () => {

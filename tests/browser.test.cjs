@@ -264,6 +264,55 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       assert.deepEqual(JSON.parse(latestSaved).user_history.map(entry => entry.text),
         ['Shared browser entry', 'Writer has the latest value']);
       await conflictContext.close();
+      const vaultConflictContext = await browser.newContext({acceptDownloads: true});
+      const localVaultPage = await vaultConflictContext.newPage();
+      const newerVaultPage = await vaultConflictContext.newPage();
+      localVaultPage.on('pageerror', error => pageErrors.push(error.message));
+      newerVaultPage.on('pageerror', error => pageErrors.push(error.message));
+      await localVaultPage.goto(origin + '/engine.html');
+      await localVaultPage.locator('#input').fill('Shared protected start');
+      await localVaultPage.getByRole('button', {name: 'SEND TO REMEMBRANCE'}).click();
+      await localVaultPage.locator('#vault-passphrase').fill(vaultPassword);
+      await localVaultPage.locator('#vault-confirm').fill(vaultPassword);
+      await localVaultPage.getByRole('button', {name: 'Encrypt browser state'}).click();
+      await localVaultPage.waitForFunction(key => JSON.parse(localStorage.getItem(key)).format === 'aru-remembrance-vault-v1', storageKey);
+      const beforeConflict = await localVaultPage.evaluate(key => localStorage.getItem(key), storageKey);
+      await newerVaultPage.goto(origin + '/engine.html');
+      await newerVaultPage.locator('#vault-unlock-passphrase').fill(vaultPassword);
+      await newerVaultPage.getByRole('button', {name: 'Unlock browser vault'}).click();
+      await newerVaultPage.locator('#vault-lock').waitFor({state: 'hidden'});
+      await localVaultPage.evaluate(() => {
+        window.originalSealForConflict = sealVaultState;
+        window.localSealStarted = new Promise(resolve => { window.markLocalSeal = resolve; });
+        sealVaultState = async (...args) => {
+          window.markLocalSeal();
+          await new Promise(resolve => { window.releaseLocalSeal = resolve; });
+          return window.originalSealForConflict(...args);
+        };
+      });
+      await localVaultPage.locator('#input').fill('Local pending protected edit');
+      await localVaultPage.getByRole('button', {name: 'SEND TO REMEMBRANCE'}).click();
+      await localVaultPage.evaluate(() => window.localSealStarted);
+      await newerVaultPage.locator('#input').fill('Newer protected edit from other tab');
+      await newerVaultPage.getByRole('button', {name: 'SEND TO REMEMBRANCE'}).click();
+      await newerVaultPage.waitForFunction(({key, old}) => localStorage.getItem(key) !== old,
+        {key: storageKey, old: beforeConflict});
+      const newerVaultRaw = await newerVaultPage.evaluate(key => localStorage.getItem(key), storageKey);
+      await localVaultPage.locator('#recovery-panel').waitFor({state: 'visible'});
+      assert.equal(await localVaultPage.locator('#vault-lock').isVisible(), false);
+      assert.equal(await localVaultPage.evaluate(exitWarning), true);
+      await localVaultPage.getByRole('button', {name: 'Show backup options'}).click();
+      assert.equal(await localVaultPage.evaluate(() => document.activeElement.id), 'export-passphrase');
+      await localVaultPage.evaluate(() => { window.releaseLocalSeal(); });
+      await localVaultPage.waitForFunction(() => vaultPendingWrites === 0);
+      assert.equal(await localVaultPage.evaluate(key => localStorage.getItem(key), storageKey), newerVaultRaw);
+      const recoveryDownload = localVaultPage.waitForEvent('download');
+      await localVaultPage.getByRole('button', {name: 'Download unencrypted JSON'}).click();
+      const recoveredSession = JSON.parse(fs.readFileSync(await (await recoveryDownload).path(), 'utf8'));
+      assert.deepEqual(recoveredSession.user_history.map(entry => entry.text),
+        ['Shared protected start', 'Local pending protected edit']);
+      assert.equal(await localVaultPage.evaluate(key => localStorage.getItem(key), storageKey), newerVaultRaw);
+      await vaultConflictContext.close();
       const exportContext = await browser.newContext({acceptDownloads: true});
       const exportPage = await exportContext.newPage();
       exportPage.on('pageerror', error => pageErrors.push(error.message));
