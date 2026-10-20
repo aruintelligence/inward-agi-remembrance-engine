@@ -193,6 +193,7 @@
             <button id="backup-download" type="button" onclick="exportState()" class="rounded-xl border border-cyan-400/50 px-4 py-2 text-cyan-200">Download unencrypted JSON</button>
             <button type="button" onclick="eraseState()" class="rounded-xl border border-rose-400/50 px-4 py-2 text-rose-200">Erase local state</button>
           </div>
+          <p id="backup-status" class="mt-2 text-slate-300" role="status" aria-live="polite"></p>
           <p id="erase-status" class="mt-2 text-slate-300" role="status" aria-live="polite"></p>
           <div class="mt-4 border-t border-white/10 pt-4">
             <div class="tiny text-cyan-300 mb-2">Optional browser vault</div>
@@ -461,13 +462,31 @@
         saved_at: new Date().toISOString(),
         user_history: userHistory.map(({text, ts}) => ({text, ts})),
         ledger_entries: ledgerEntries.map(({text, ts}) => ({text, ts})),
-        field: Array.from(mu)
+        // Six decimal places are more than enough for the displayed model and
+        // give future field motion a predictable portable-file byte budget.
+        field: Array.from(mu, value => Number(value.toFixed(6)))
       };
+    }
+
+    function portableBytes(value, pretty = false) {
+      return new Blob([JSON.stringify(value, null, pretty ? 2 : undefined)]).size;
+    }
+
+    function hasPortableRoom(state) {
+      // Reserve the largest six-decimal field and three fully escaped labels.
+      // Later animation or a new retrieval label cannot invalidate a saved
+      // memory merely by changing the serialized length of those fields.
+      const bound = {...state, field: Array(FIELD_WIDTH).fill(1.234567),
+        ledger_entries: Array.from({length: 3}, () => ({text: '\u0000'.repeat(29), ts: Number.MAX_SAFE_INTEGER}))};
+      return portableBytes(bound) <= MAX_IMPORT_BYTES;
     }
 
     function saveState() {
       stateRevision++;
       resetBackupVerification('Page changed. Recheck the selected file before relying on its comparison.');
+      if (document.getElementById('backup-status').textContent) {
+        document.getElementById('backup-status').textContent = 'Page changed. Download a new unencrypted copy for the latest memory.';
+      }
       unsavedChanges = true;
       if (pendingImport) cancelImportReview('Local state changed. Review the file again before restoring.');
       if (pendingForget) cancelForgetReview('Local state changed. Review the memory again before removing it.');
@@ -614,10 +633,6 @@
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
-    function downloadJson(value, name) {
-      downloadJsonText(JSON.stringify(value, null, 2), name);
-    }
-
     async function sha256Hex(bytes) {
       return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)),
         byte => byte.toString(16).padStart(2, '0')).join('');
@@ -629,8 +644,17 @@
     }
 
     function exportState() {
-      if (vaultLocked || vaultTransition) return;
-      downloadJson(stateSnapshot(), 'inward-remembrance-state.json');
+      if (vaultLocked || vaultTransition) return false;
+      const state = stateSnapshot();
+      const status = document.getElementById('backup-status');
+      if (portableBytes(state) > MAX_IMPORT_BYTES) {
+        status.textContent = 'Download refused: this snapshot exceeds 256 KiB and could not be restored. Remove a saved memory, then retry.';
+        return false;
+      }
+      const pretty = portableBytes(state, true) <= MAX_IMPORT_BYTES;
+      downloadJsonText(JSON.stringify(state, null, pretty ? 2 : undefined), 'inward-remembrance-state.json');
+      status.textContent = `Unencrypted copy started${pretty ? '' : ' in compact JSON to stay within 256 KiB'}. Check your downloads to confirm it arrived.`;
+      return true;
     }
 
     function cryptoAvailable() {
@@ -1786,6 +1810,13 @@
         document.getElementById('send-status').textContent = 'Entry not saved: all 40 memory spaces are in use. Your draft is still here. Review and remove a saved memory first.';
         return false;
       }
+      const candidate = stateSnapshot();
+      candidate.user_history.push({text, ts: Date.now()});
+      if (!hasPortableRoom(candidate)) {
+        document.getElementById('send-status').textContent =
+          'Entry not saved: the portable 256 KiB memory budget is full. Your draft is still here. Review and remove a saved memory first.';
+        return false;
+      }
       document.getElementById('send-status').textContent = '';
 
       appendMessage(text, true);
@@ -1838,6 +1869,10 @@
     function triggerGuardianVeto() {
       if (vaultLocked || vaultTransition) return;
       if (needsSavedStateRecovery()) return pauseUnsavedInput();
+      if (!hasPortableRoom(stateSnapshot())) {
+        document.getElementById('send-status').textContent = 'Action paused: the portable 256 KiB memory budget is full. Review and remove a saved memory first.';
+        return false;
+      }
       const c = meanFieldCenter();
       contractField(c, 0.42, 110);
       addTrace(c, 1.25, 104, 0, 'veto');
@@ -1850,6 +1885,10 @@
     function activateMirror() {
       if (vaultLocked || vaultTransition) return;
       if (needsSavedStateRecovery()) return pauseUnsavedInput();
+      if (!hasPortableRoom(stateSnapshot())) {
+        document.getElementById('send-status').textContent = 'Action paused: the portable 256 KiB memory budget is full. Review and remove a saved memory first.';
+        return false;
+      }
       const orientation = parseFloat(document.getElementById('orientation').value) || 42;
       const center = clamp(Math.floor((orientation / 360) * (FIELD_WIDTH - 1)), 60, FIELD_WIDTH - 60);
 

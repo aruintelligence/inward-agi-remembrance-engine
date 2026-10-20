@@ -1730,17 +1730,20 @@ test('independent Python verifier agrees with browser decisions and rejects dama
 
 test('near-limit real export has the same 256 KiB boundary in browser, Node, and Python', async () => {
   const app = boot();
-  const phrase = '界'.repeat(1988) + ' orange pear';
+  // Legal JSON control characters expand to six bytes each when serialized.
+  // The field is now deliberately serialized at six decimal places.
+  const phrase = '界'.repeat(1888) + '\u0001'.repeat(100) + ' orange pear';
   assert.equal(phrase.length, 2000);
   const state = {...app.read('stateSnapshot()'),
     user_history: Array.from({length: 40}, (_, index) => ({text: phrase, ts: 1792452000000 + index})),
     ledger_entries: Array.from({length: 3}, (_, index) => ({text: '界'.repeat(29), ts: 1792452000000 + index})),
-    field: Array(720).fill(0.12345678901234568)};
+    field: Array(720).fill(0.123457)};
   app.read(`hydrateState(validateImportedState(${JSON.stringify(JSON.stringify(state))}))`);
   app.read('exportState()');
   const raw = await app.exports[0].text();
   const length = Buffer.byteLength(raw);
   assert.ok(length > 256000 && length <= 256 * 1024, `fixture bytes: ${length}`);
+  assert.match(app.elements.get('backup-status').textContent, /compact JSON/);
   assert.equal(app.read(`validateImportedState(${JSON.stringify(raw)}).user_history.length`), 40);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'remembrance-near-limit-'));
   const file = path.join(dir, 'dense-export.json');
@@ -1767,6 +1770,52 @@ test('near-limit real export has the same 256 KiB boundary in browser, Node, and
   } finally {
     fs.rmSync(dir, {recursive: true, force: true});
   }
+});
+
+test('byte budget refuses an oversized entry without changing memory, field, draft, or saved bytes', async () => {
+  const app = boot();
+  const text = '\u0001'.repeat(2000); // Each character is six bytes in JSON.
+  let blocked = false;
+  for (let i = 0; i < 40; i++) {
+    const before = app.saved.get(key);
+    const history = app.read('userHistory.length');
+    const field = Array.from(app.read('mu'));
+    const chat = app.elements.get('chat').children.length;
+    app.send(text);
+    if (!/256 KiB memory budget/.test(app.elements.get('send-status').textContent)) continue;
+    blocked = true;
+    assert.ok(history > 0 && history < 40);
+    assert.equal(app.read('userHistory.length'), history);
+    assert.deepEqual(Array.from(app.read('mu')), field);
+    assert.equal(app.elements.get('chat').children.length, chat);
+    assert.equal(app.elements.get('input').value, text);
+    assert.equal(app.saved.get(key), before);
+    assert.equal(warnsOnExit(app), false);
+    break;
+  }
+  assert.equal(blocked, true);
+  assert.equal(app.read('exportState()'), true);
+  const exported = await app.exports.at(-1).text();
+  assert.ok(Buffer.byteLength(exported) <= 256 * 1024);
+  assert.equal(app.read(`validateImportedState(${JSON.stringify(exported)}).user_history.length`),
+    app.read('userHistory.length'));
+
+  const vault = boot(app.saved);
+  assert.equal(await enableVault(vault), true);
+  const encryptedBefore = vault.saved.get(key);
+  vault.send(text);
+  assert.match(vault.elements.get('send-status').textContent, /256 KiB memory budget/);
+  assert.equal(vault.saved.get(key), encryptedBefore);
+  assert.equal(vault.read('vaultPendingWrites'), 0);
+  assert.equal(vault.elements.get('input').value, text);
+
+  // A session made oversized by an earlier version must never claim that an
+  // un-restorable file was downloaded.
+  const legacy = boot();
+  legacy.read(`userHistory = Array.from({length: 40}, (_, ts) => ({text: ${JSON.stringify(text)}, ts}))`);
+  assert.equal(legacy.read('exportState()'), false);
+  assert.equal(legacy.exports.length, 0);
+  assert.match(legacy.elements.get('backup-status').textContent, /could not be restored/);
 });
 
 test('browser recall passes labeled sparse-overlap and explicit-match challenges', () => {
