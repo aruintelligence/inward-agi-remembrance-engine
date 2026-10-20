@@ -323,6 +323,8 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       assert.equal(checkedRecovery.status, 0, checkedRecovery.stderr);
       assert.equal(JSON.parse(checkedRecovery.stdout).memories, 2);
       assert.equal(JSON.parse(checkedRecovery.stdout).integrity, 'aes-256-gcm-tag-verified');
+      assert.match(await localVaultPage.locator('#crypto-status').textContent(),
+        new RegExp(JSON.parse(checkedRecovery.stdout).file_sha256));
       await localVaultPage.locator('#verify-file').setInputFiles({
         name: 'recovery-check.json', mimeType: 'application/json', buffer: Buffer.from(recoveryBytes)
       });
@@ -335,6 +337,7 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       const checkedInBrowser = await localVaultPage.locator('#verify-status').textContent();
       assert.match(checkedInBrowser, /2 memories, 0 labels/);
       assert.match(checkedInBrowser, new RegExp(JSON.parse(checkedRecovery.stdout).file_sha256));
+      assert.match(checkedInBrowser, /Exact bytes match this page.*latest encrypted download/);
       assert.match(checkedInBrowser, /Current-page memories and labels match this file/);
       assert.doesNotMatch(checkedInBrowser, /Local pending protected edit/);
       assert.equal(await localVaultPage.locator('#verify-passphrase').inputValue(), '');
@@ -353,6 +356,7 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       await localVaultPage.locator('#verify-passphrase').fill(portablePassword);
       await localVaultPage.getByRole('button', {name: 'Verify downloaded copy'}).click();
       await localVaultPage.locator('#verify-status').filter({hasText: /MEMORIES DIFFER.*reviewed merge/}).waitFor();
+      assert.match(await localVaultPage.locator('#verify-status').textContent(), /No current in-page encrypted download fingerprint/);
       await localVaultPage.locator('#state-file').setInputFiles({
         name: 'recovered-encrypted.json', mimeType: 'application/json', buffer: Buffer.from(recoveryBytes)
       });

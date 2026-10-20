@@ -524,6 +524,8 @@ test('encrypted export is private, randomized, independently decryptable, and re
   assert.equal(confirm.value, '');
   assert.equal(donor.exports.length, 1);
   const raw = await donor.exports[0].text();
+  const preparedHash = createHash('sha256').update(Buffer.from(raw)).digest('hex');
+  assert.match(donor.elements.get('crypto-status').textContent, new RegExp(preparedHash));
   assert.doesNotMatch(raw, /private café memory/);
   const envelope = JSON.parse(raw);
   assert.deepEqual(Object.keys(envelope).sort(), ['ciphertext', 'format', 'iterations', 'iv', 'salt']);
@@ -599,12 +601,21 @@ test('read-only browser verifier authenticates a downloaded copy and hashes its 
   selectVerificationFile(donor, raw);
   donor.context.document.getElementById('verify-passphrase').value = passphrase;
   assert.equal(await donor.read('verifyBackupFile()'), true);
+  assert.match(donor.elements.get('verify-status').textContent, /Exact bytes match this page.*latest encrypted download/);
+  assert.match(donor.elements.get('verify-status').textContent, /Current-page memories and labels match this file/);
+  donor.context.document.getElementById('export-passphrase').value = passphrase;
+  donor.context.document.getElementById('export-confirm').value = passphrase;
+  assert.equal(await donor.read('exportEncryptedState()'), true);
+  donor.context.document.getElementById('verify-passphrase').value = passphrase;
+  assert.equal(await donor.read('verifyBackupFile()'), true);
+  assert.match(donor.elements.get('verify-status').textContent, /File differs from this page.*latest encrypted download/);
   assert.match(donor.elements.get('verify-status').textContent, /Current-page memories and labels match this file/);
   donor.send('An edit submitted after that download');
   assert.match(donor.elements.get('verify-status').textContent, /Page changed. Recheck/);
   donor.context.document.getElementById('verify-passphrase').value = passphrase;
   assert.equal(await donor.read('verifyBackupFile()'), true);
   assert.match(donor.elements.get('verify-status').textContent, /MEMORIES DIFFER.*not a copy of this page/);
+  assert.match(donor.elements.get('verify-status').textContent, /No current in-page encrypted download fingerprint/);
   assert.doesNotMatch(donor.elements.get('verify-status').textContent, /An edit submitted after that download/);
 });
 
@@ -863,6 +874,31 @@ test('encrypted export rejects a changed session instead of delivering an outdat
   const restored = JSON.parse(await app.read(`decodeImportText(${JSON.stringify(encrypted)}, ${JSON.stringify(passphrase)})`));
   assert.deepEqual(restored.user_history.map(entry => entry.text),
     ['Original backup memory', 'New memory during encryption']);
+});
+
+test('encrypted export rechecks freshness after hashing its exact download bytes', async () => {
+  const app = boot();
+  app.send('First memory before file hash');
+  const passphrase = 'a separate passphrase for digest race';
+  app.context.document.getElementById('export-passphrase').value = passphrase;
+  app.context.document.getElementById('export-confirm').value = passphrase;
+  let hashing;
+  const started = new Promise(resolve => { hashing = resolve; });
+  app.context.markHashing = hashing;
+  app.read(`globalThis.originalHash = sha256Hex;
+    sha256Hex = async bytes => {
+      markHashing();
+      await new Promise(resolve => { globalThis.releaseHash = resolve; });
+      return originalHash(bytes);
+    };`);
+  const pending = app.read('exportEncryptedState()');
+  await started;
+  app.send('New memory after encryption but before download');
+  app.context.releaseHash();
+  assert.equal(await pending, false);
+  assert.equal(app.exports.length, 0);
+  assert.equal(app.read('lastEncryptedDownload'), null);
+  assert.match(app.elements.get('crypto-status').textContent, /Session changed while encrypting/);
 });
 
 test('reviewed plaintext restore and erasure wait for a portable export before changing storage', async () => {
