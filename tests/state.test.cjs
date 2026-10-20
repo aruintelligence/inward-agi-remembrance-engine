@@ -384,11 +384,14 @@ test('reduced motion pauses idle evolution but deliberate inputs still change th
   assert.equal(JSON.parse(app.saved.get(key)).user_history.length, 1);
 });
 
-test('damaged snapshots are ignored and blocked storage does not stop interaction', () => {
+test('damaged saved state pauses new input while a fresh blocked-storage session stays ephemeral', () => {
   const damaged = boot(new Map([[key, '{broken']]));
   assert.equal(damaged.read('userHistory.length'), 0);
-  damaged.send('Works despite corrupt saved JSON');
-  assert.equal(damaged.read('userHistory.length'), 1);
+  damaged.send('Draft beside corrupt saved JSON');
+  assert.equal(damaged.read('userHistory.length'), 0);
+  assert.equal(damaged.elements.get('input').value, 'Draft beside corrupt saved JSON');
+  assert.equal(damaged.elements.get('recovery-panel').hidden, false);
+  assert.equal(damaged.saved.get(key), '{broken');
 
   const blocked = boot(new Map(), true);
   blocked.send('Ephemeral text');
@@ -755,14 +758,78 @@ test('vault write failure and unreadable old state preserve the stored bytes', a
   assert.equal(blocked.read('storageConflict'), true);
   assert.equal(await blocked.read('lockVault()'), false);
   assert.match(blocked.elements.get('vault-status').textContent, /A save failed/);
+  blocked.context.document.getElementById('input').value = 'Keep this vault draft';
+  const beforeField = Array.from(blocked.read('Array.from(mu)'));
+  assert.equal(blocked.read('sendToField()'), false);
+  assert.equal(blocked.read('triggerGuardianVeto()'), false);
+  assert.equal(blocked.read('activateMirror()'), false);
+  assert.equal(blocked.elements.get('input').value, 'Keep this vault draft');
+  assert.equal(blocked.read('userHistory.length'), 2);
+  assert.deepEqual(Array.from(blocked.read('Array.from(mu)')), beforeField);
+  assert.equal(blocked.elements.get('recovery-panel').hidden, false);
+  blocked.read('exportState()');
+  const copy = JSON.parse(await blocked.exports[0].text());
+  assert.deepEqual(copy.user_history.map(entry => entry.text),
+    ['Persisted protected entry', 'Unsaved protected entry']);
+  assert.equal(seed.saved.get(key), sealed);
 
   const corrupted = '{damaged';
   const old = boot(new Map([[key, corrupted]]));
   old.send('Still usable in memory');
-  assert.equal(old.read('userHistory.length'), 1);
+  assert.equal(old.read('userHistory.length'), 0);
+  assert.equal(old.elements.get('input').value, 'Still usable in memory');
   assert.equal(old.saved.get(key), corrupted);
   assert.equal(await enableVault(old), false);
   assert.equal(old.saved.get(key), corrupted);
+});
+
+test('a changed plaintext value pauses input and preserves the newer saved state', async () => {
+  const saved = new Map();
+  const first = boot(saved);
+  first.send('A shared starting memory');
+  const stale = boot(saved);
+  const staleField = Array.from(stale.read('Array.from(mu)'));
+  const staleChatLength = stale.elements.get('chat').children.length;
+  first.send('Another tab changed memory');
+  const newerValue = saved.get(key);
+  stale.window.fireStorage({key, newValue: newerValue});
+  assert.equal(stale.elements.get('recovery-panel').hidden, false);
+  stale.context.document.getElementById('input').value = 'The waiting draft';
+  assert.equal(stale.read('sendToField()'), false);
+  assert.equal(stale.read('triggerGuardianVeto()'), false);
+  assert.equal(stale.read('activateMirror()'), false);
+  assert.equal(stale.elements.get('input').value, 'The waiting draft');
+  assert.equal(stale.read('userHistory.length'), 1);
+  assert.equal(stale.elements.get('chat').children.length, staleChatLength);
+  assert.deepEqual(Array.from(stale.read('Array.from(mu)')), staleField);
+  assert.equal(saved.get(key), newerValue);
+  assert.match(stale.elements.get('send-status').textContent, /Input paused/);
+  stale.read('exportState()');
+  const copy = JSON.parse(await stale.exports[0].text());
+  assert.deepEqual(copy.user_history.map(entry => entry.text), ['A shared starting memory']);
+});
+
+test('a failed plaintext write keeps the first unsaved entry downloadable and refuses another', async () => {
+  const seed = boot();
+  seed.send('A stored memory');
+  const saved = seed.saved;
+  const original = saved.get(key);
+  const blocked = boot(saved, false, true);
+  blocked.send('First unsaved entry');
+  assert.equal(saved.get(key), original);
+  assert.equal(blocked.elements.get('recovery-panel').hidden, false);
+  const beforeField = Array.from(blocked.read('Array.from(mu)'));
+  const beforeChatLength = blocked.elements.get('chat').children.length;
+  blocked.context.document.getElementById('input').value = 'Second unsaved draft';
+  assert.equal(blocked.read('sendToField()'), false);
+  assert.equal(blocked.elements.get('input').value, 'Second unsaved draft');
+  assert.equal(blocked.read('userHistory.length'), 2);
+  assert.equal(blocked.elements.get('chat').children.length, beforeChatLength);
+  assert.deepEqual(Array.from(blocked.read('Array.from(mu)')), beforeField);
+  blocked.read('exportState()');
+  const copy = JSON.parse(await blocked.exports[0].text());
+  assert.deepEqual(copy.user_history.map(entry => entry.text), ['A stored memory', 'First unsaved entry']);
+  assert.equal(saved.get(key), original);
 });
 
 test('vault migration failure keeps the original plaintext, and locking waits for a save', async () => {
