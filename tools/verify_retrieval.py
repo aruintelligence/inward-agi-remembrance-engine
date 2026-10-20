@@ -16,7 +16,7 @@ STOP_WORDS = set(
     "our say said the this to was we were what when where who why with you your "
     "remember memory field please tell about".split()
 )
-MAX_BYTES = 256_000
+MAX_BYTES = 256 * 1024
 
 
 def tokenize(text):
@@ -82,9 +82,11 @@ def inspect(history, query):
 
 def read_history(snapshot_path):
     path = Path(snapshot_path)
-    if path.stat().st_size > MAX_BYTES:
-        raise ValueError("snapshot exceeds the 256 KB verifier limit")
-    state = json.loads(path.read_text(encoding="utf-8"))
+    with path.open("rb") as snapshot:
+        data = snapshot.read(MAX_BYTES + 1)
+    if len(data) > MAX_BYTES:
+        raise ValueError("snapshot exceeds the 256 KiB verifier limit")
+    state = json.loads(data.decode("utf-8"))
     if not isinstance(state, dict) or type(state.get("schema_version")) is not int or state["schema_version"] != 1:
         raise ValueError("expected a v1 Remembrance Engine snapshot")
     history = state.get("user_history")

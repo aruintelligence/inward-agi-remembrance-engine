@@ -1728,6 +1728,47 @@ test('independent Python verifier agrees with browser decisions and rejects dama
   }
 });
 
+test('near-limit real export has the same 256 KiB boundary in browser, Node, and Python', async () => {
+  const app = boot();
+  const phrase = '界'.repeat(1988) + ' orange pear';
+  assert.equal(phrase.length, 2000);
+  const state = {...app.read('stateSnapshot()'),
+    user_history: Array.from({length: 40}, (_, index) => ({text: phrase, ts: 1792452000000 + index})),
+    ledger_entries: Array.from({length: 3}, (_, index) => ({text: '界'.repeat(29), ts: 1792452000000 + index})),
+    field: Array(720).fill(0.12345678901234568)};
+  app.read(`hydrateState(validateImportedState(${JSON.stringify(JSON.stringify(state))}))`);
+  app.read('exportState()');
+  const raw = await app.exports[0].text();
+  const length = Buffer.byteLength(raw);
+  assert.ok(length > 256000 && length <= 256 * 1024, `fixture bytes: ${length}`);
+  assert.equal(app.read(`validateImportedState(${JSON.stringify(raw)}).user_history.length`), 40);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'remembrance-near-limit-'));
+  const file = path.join(dir, 'dense-export.json');
+  try {
+    fs.writeFileSync(file, raw);
+    const nodeCheck = spawnSync(process.execPath, [path.join(__dirname, '..', 'tools', 'verify_backup.cjs'), file],
+      {encoding: 'utf8'});
+    assert.equal(nodeCheck.status, 0, nodeCheck.stderr);
+    assert.equal(JSON.parse(nodeCheck.stdout).memories, 40);
+    const pythonVerifier = path.join(__dirname, '..', 'tools', 'verify_retrieval.py');
+    const pythonCheck = spawnSync('python3', [pythonVerifier, file], {input: 'orange pear', encoding: 'utf8'});
+    assert.equal(pythonCheck.status, 0, pythonCheck.stderr);
+    assert.equal(JSON.parse(pythonCheck.stdout).selected_index, 39);
+    const browser = app.read(`inspectRetrieval('orange pear')`);
+    assert.equal(browser.status, JSON.parse(pythonCheck.stdout).status);
+    assert.equal(browser.selected.index, 39);
+
+    fs.appendFileSync(file, ' '.repeat(256 * 1024 - length + 1));
+    const oversized = spawnSync('python3', [pythonVerifier, file], {input: 'orange pear', encoding: 'utf8'});
+    assert.equal(oversized.status, 2);
+    assert.match(oversized.stderr, /exceeds the 256 KiB verifier limit/);
+    assert.throws(() => app.read(`validateImportedState(${JSON.stringify(raw + ' '.repeat(256 * 1024 - length + 1))})`),
+      /256 KB limit/);
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
 test('browser recall passes labeled sparse-overlap and explicit-match challenges', () => {
   const cases = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'recall-challenges.json'), 'utf8'));
   const app = boot();
