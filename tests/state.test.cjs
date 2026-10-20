@@ -1248,6 +1248,16 @@ test('a vault storage event keeps a pending local edit downloadable and the newe
   assert.equal(await unlockVault(latest), true);
   assert.deepEqual(Array.from(latest.read('userHistory.map(entry => entry.text)')),
     ['Shared vault starting memory', 'Another tab committed a newer vault']);
+  assert.equal(latest.read(`reviewImportText(${JSON.stringify(JSON.stringify(recovered))})`), true);
+  assert.equal(latest.read('mergeSelection().length'), 3);
+  assert.equal(await latest.read("applyReviewedImport('merge')"), true);
+  assert.equal(latest.window.reloaded, true);
+  assert.doesNotMatch(saved.get(key), /Local edit not yet saved|Another tab committed/);
+  const combined = boot(saved);
+  assert.equal(await unlockVault(combined), true);
+  assert.deepEqual(new Set(Array.from(combined.read('userHistory.map(entry => entry.text)'))), new Set([
+    'Shared vault starting memory', 'Local edit not yet saved', 'Another tab committed a newer vault'
+  ]));
 });
 
 test('a forgotten vault can be erased from the locked screen without touching other keys', async () => {

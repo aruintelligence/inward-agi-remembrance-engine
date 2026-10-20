@@ -246,6 +246,7 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       await writer.locator('#input').fill('Writer has the latest value');
       await writer.getByRole('button', {name: 'SEND TO REMEMBRANCE'}).click();
       await stalePage.locator('#recovery-panel').waitFor({state: 'visible'});
+      assert.equal(await stalePage.locator('#vault-recovery-steps').isVisible(), false);
       const latestSaved = await stalePage.evaluate(key => localStorage.getItem(key), storageKey);
       await stalePage.locator('#input').fill('A draft from the stale tab');
       await stalePage.getByRole('button', {name: 'SEND TO REMEMBRANCE'}).click();
@@ -299,6 +300,8 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
         {key: storageKey, old: beforeConflict});
       const newerVaultRaw = await newerVaultPage.evaluate(key => localStorage.getItem(key), storageKey);
       await localVaultPage.locator('#recovery-panel').waitFor({state: 'visible'});
+      assert.match(await localVaultPage.locator('#vault-recovery-steps').textContent(), /select current and incoming memories to merge/);
+      assert.equal(await localVaultPage.locator('#vault-recovery-steps').isVisible(), true);
       assert.equal(await localVaultPage.locator('#vault-lock').isVisible(), false);
       assert.equal(await localVaultPage.evaluate(exitWarning), true);
       await localVaultPage.getByRole('button', {name: 'Show backup options'}).click();
@@ -306,12 +309,50 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       await localVaultPage.evaluate(() => { window.releaseLocalSeal(); });
       await localVaultPage.waitForFunction(() => vaultPendingWrites === 0);
       assert.equal(await localVaultPage.evaluate(key => localStorage.getItem(key), storageKey), newerVaultRaw);
+      await localVaultPage.locator('#export-passphrase').fill(portablePassword);
+      await localVaultPage.locator('#export-confirm').fill(portablePassword);
       const recoveryDownload = localVaultPage.waitForEvent('download');
-      await localVaultPage.getByRole('button', {name: 'Download unencrypted JSON'}).click();
-      const recoveredSession = JSON.parse(fs.readFileSync(await (await recoveryDownload).path(), 'utf8'));
-      assert.deepEqual(recoveredSession.user_history.map(entry => entry.text),
-        ['Shared protected start', 'Local pending protected edit']);
+      await localVaultPage.getByRole('button', {name: 'Download encrypted JSON'}).click();
+      const recoveryPath = await (await recoveryDownload).path();
+      const recoveryBytes = fs.readFileSync(recoveryPath, 'utf8');
+      assert.equal(JSON.parse(recoveryBytes).format, 'aru-remembrance-encrypted-v1');
+      assert.doesNotMatch(recoveryBytes, /Local pending protected edit/);
+      const checkedRecovery = spawnSync(process.execPath,
+        [path.join(__dirname, '..', 'tools', 'verify_backup.cjs'), recoveryPath, '--passphrase-stdin'],
+        {input: portablePassword, encoding: 'utf8'});
+      assert.equal(checkedRecovery.status, 0, checkedRecovery.stderr);
+      assert.equal(JSON.parse(checkedRecovery.stdout).memories, 2);
+      assert.equal(JSON.parse(checkedRecovery.stdout).integrity, 'aes-256-gcm-tag-verified');
       assert.equal(await localVaultPage.evaluate(key => localStorage.getItem(key), storageKey), newerVaultRaw);
+      localVaultPage.on('dialog', dialog => dialog.accept());
+      await localVaultPage.reload();
+      await localVaultPage.locator('#vault-lock').waitFor({state: 'visible'});
+      await localVaultPage.locator('#vault-unlock-passphrase').fill(vaultPassword);
+      await localVaultPage.getByRole('button', {name: 'Unlock browser vault'}).click();
+      await localVaultPage.locator('#vault-lock').waitFor({state: 'hidden'});
+      assert.equal(await localVaultPage.locator('#memory-depth').textContent(), '2');
+      await localVaultPage.locator('#state-file').setInputFiles({
+        name: 'recovered-encrypted.json', mimeType: 'application/json', buffer: Buffer.from(recoveryBytes)
+      });
+      await localVaultPage.locator('#import-passphrase').fill(portablePassword);
+      await localVaultPage.getByRole('button', {name: 'Review selected JSON'}).click();
+      await localVaultPage.locator('#import-status').filter({hasText: /Review complete/}).waitFor();
+      await localVaultPage.getByRole('button', {name: 'Select all'}).click();
+      assert.match(await localVaultPage.locator('#merge-count').textContent(), /3 selected of 3 distinct memories/);
+      await Promise.all([
+        localVaultPage.waitForEvent('load'),
+        localVaultPage.getByRole('button', {name: 'Merge selected memories'}).click()
+      ]);
+      await localVaultPage.locator('#vault-lock').waitFor({state: 'visible'});
+      await localVaultPage.locator('#vault-unlock-passphrase').fill(vaultPassword);
+      await localVaultPage.getByRole('button', {name: 'Unlock browser vault'}).click();
+      await localVaultPage.locator('#vault-lock').waitFor({state: 'hidden'});
+      assert.equal(await localVaultPage.locator('#memory-depth').textContent(), '3');
+      assert.deepEqual(new Set(await localVaultPage.evaluate(() => userHistory.map(entry => entry.text))), new Set([
+        'Shared protected start', 'Local pending protected edit', 'Newer protected edit from other tab'
+      ]));
+      assert.doesNotMatch(await localVaultPage.evaluate(key => localStorage.getItem(key), storageKey),
+        /Local pending protected edit|Newer protected edit/);
       await vaultConflictContext.close();
       const exportContext = await browser.newContext({acceptDownloads: true});
       const exportPage = await exportContext.newPage();

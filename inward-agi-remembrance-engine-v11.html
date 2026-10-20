@@ -295,6 +295,7 @@
           <p id="send-status" class="text-sm text-amber-300 mt-2" role="status" aria-live="polite"></p>
           <div id="recovery-panel" hidden class="mt-3 rounded-xl border border-amber-300/50 bg-black/20 p-3 text-sm text-amber-100" role="alert">
             <p>Saving is paused. This page may contain unsaved changes. Download the current session before reloading. A waiting draft stays in the input and must be copied separately.</p>
+            <p id="vault-recovery-steps" hidden class="mt-2">Vault recovery: download an encrypted copy and check it arrived. Reload, unlock the latest vault, review that copy, then select current and incoming memories to merge. Keep the copy until you verify the result.</p>
             <button type="button" onclick="openBackupControls()" class="mt-2 text-cyan-200 underline">Show backup options</button>
           </div>
           <button type="button" onclick="openMemoryControl()" class="mt-2 text-sm text-cyan-200 underline">Manage memories</button>
@@ -423,6 +424,7 @@
 
     function showStorageStatus() {
       document.getElementById('recovery-panel').hidden = vaultLocked || !needsSavedStateRecovery();
+      document.getElementById('vault-recovery-steps').hidden = !(vaultSession && unsavedChanges && needsSavedStateRecovery());
       document.getElementById('storage-status').textContent = vaultLocked
         ? 'Browser vault locked. No saved memory is loaded until you unlock it.'
         : storageConflict && vaultSession && unsavedChanges
