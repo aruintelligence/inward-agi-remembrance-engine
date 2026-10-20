@@ -11,7 +11,8 @@ const html = fs.readFileSync(path.join(__dirname, '..', 'inward-agi-remembrance-
 const source = html.match(/<script>([\s\S]*?)<\/script>/)[1];
 const key = 'aru_remembrance_engine_v11_state';
 
-function boot(saved = new Map(), storageBlocked = false, storageWriteBlocked = false) {
+function boot(saved = new Map(), storageBlocked = false, storageWriteBlocked = false,
+  storageDeleteBlocked = false, storageDeleteNoop = false) {
   const elements = new Map();
   const exports = [];
   class Element {
@@ -41,7 +42,10 @@ function boot(saved = new Map(), storageBlocked = false, storageWriteBlocked = f
   const localStorage = {
     getItem(k) { if (storageBlocked) throw new Error('blocked'); return saved.get(k) || null; },
     setItem(k, v) { if (storageBlocked || storageWriteBlocked) throw new Error('blocked'); saved.set(k, v); },
-    removeItem(k) { if (storageBlocked) throw new Error('blocked'); saved.delete(k); }
+    removeItem(k) {
+      if (storageBlocked || storageDeleteBlocked) throw new Error('blocked');
+      if (!storageDeleteNoop) saved.delete(k);
+    }
   };
   const window = {
     confirm() { return true; },
@@ -365,10 +369,73 @@ test('export includes text and erasure removes only the app state', async () => 
   const data = JSON.parse(await app.exports[0].text());
   assert.equal(data.user_history[0].text, 'Private phrase');
   assert.equal(data.schema_version, 1);
-  app.read('eraseState()');
+  assert.equal(await app.read('eraseState()'), true);
   assert.equal(app.window.reloaded, true);
   assert.equal(app.saved.get('unrelated'), 'keep');
   assert.equal(app.saved.has(key), false);
+});
+
+test('blocked or ineffective deletion does not reload or claim the saved state was erased', async () => {
+  const original = boot();
+  original.send('Keep this on failed erase');
+  const before = original.saved.get(key);
+  for (const app of [boot(original.saved, false, false, true),
+    boot(original.saved, false, false, false, true)]) {
+    assert.equal(await app.read('eraseState()'), false);
+    assert.equal(app.window.reloaded, undefined);
+    assert.equal(app.saved.get(key), before);
+    assert.equal(app.read('userHistory[0].text'), 'Keep this on failed erase');
+    assert.match(app.elements.get('erase-status').textContent, /Erase not confirmed/);
+  }
+});
+
+test('erasure of a locked vault checks the current saved value before deleting', async () => {
+  const saved = new Map();
+  const original = boot(saved);
+  original.send('Protected in another tab');
+  assert.equal(await enableVault(original), true);
+  const locked = boot(saved);
+  const changed = JSON.stringify({...JSON.parse(saved.get(key)), iv: 'AAAAAAAAAAAAAAAA'});
+  saved.set(key, changed);
+  assert.equal(await locked.read('eraseState()'), false);
+  assert.equal(saved.get(key), changed);
+  assert.equal(locked.window.reloaded, undefined);
+  assert.match(locked.elements.get('vault-erase-status').textContent, /changed in another tab/);
+});
+
+test('erasure refuses a cross-tab vault change while waiting for a pending operation', async () => {
+  const app = boot();
+  app.send('Initial private entry');
+  assert.equal(await enableVault(app), true);
+  app.send('Pending private entry');
+  const pending = app.read('vaultWriteQueue');
+  assert.equal(await pending.then(() => true), true);
+  const afterPending = app.saved.get(key);
+  let resume;
+  app.context.resumeErasure = () => resume();
+  app.context.holdErasure = new Promise(resolve => { resume = resolve; });
+  app.read('vaultWriteQueue = holdErasure');
+  const erasing = app.read('eraseState()');
+  const changed = JSON.stringify({...JSON.parse(afterPending), iv: 'AAAAAAAAAAAAAAAA'});
+  app.saved.set(key, changed);
+  app.window.fireStorage({key, newValue: changed});
+  app.context.resumeErasure();
+  assert.equal(await erasing, false);
+  assert.equal(app.saved.get(key), changed);
+  assert.equal(app.window.reloaded, undefined);
+  assert.match(app.elements.get('vault-erase-status').textContent, /session changed/);
+});
+
+test('erasure after a pending vault save removes only the committed app key', async () => {
+  const saved = new Map([['unrelated', 'keep']]);
+  const app = boot(saved);
+  app.send('First secret');
+  assert.equal(await enableVault(app), true);
+  app.send('Second secret awaiting encryption');
+  assert.equal(await app.read('eraseState()'), true);
+  assert.equal(saved.has(key), false);
+  assert.equal(saved.get('unrelated'), 'keep');
+  assert.equal(app.window.reloaded, true);
 });
 
 test('encrypted export is private, randomized, independently decryptable, and reviewed before restore', async () => {
@@ -724,7 +791,7 @@ test('a forgotten vault can be erased from the locked screen without touching ot
   assert.equal(await enableVault(app), true);
   const locked = boot(saved);
   assert.equal(locked.read('vaultLocked'), true);
-  locked.read('eraseState()');
+  assert.equal(await locked.read('eraseState()'), true);
   assert.equal(locked.window.reloaded, true);
   assert.equal(saved.has(key), false);
   assert.equal(saved.get('unrelated'), 'keep');

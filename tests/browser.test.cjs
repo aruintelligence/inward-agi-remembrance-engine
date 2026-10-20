@@ -182,6 +182,27 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       assert.equal(await receivingPage.locator('#memory-depth').textContent(), '40');
       assert.equal(JSON.parse(await receivingPage.evaluate(key => localStorage.getItem(key), storageKey)).user_history.at(-1).text,
         'The forty-first browser draft');
+      receivingPage.on('dialog', dialog => dialog.accept());
+      await receivingPage.evaluate(() => {
+        localStorage.setItem('unrelated', 'keep');
+        window.originalRemoveItem = Storage.prototype.removeItem;
+        Storage.prototype.removeItem = function(key) {
+          if (key === 'aru_remembrance_engine_v11_state') throw new Error('blocked deletion');
+          return window.originalRemoveItem.call(this, key);
+        };
+      });
+      const beforeErase = await receivingPage.evaluate(key => localStorage.getItem(key), storageKey);
+      await receivingPage.getByRole('button', {name: 'Erase local state'}).click();
+      await receivingPage.locator('#erase-status').filter({hasText: /Erase not confirmed/}).waitFor();
+      assert.equal(await receivingPage.evaluate(key => localStorage.getItem(key), storageKey), beforeErase);
+      assert.equal(await receivingPage.locator('#memory-depth').textContent(), '40');
+      await receivingPage.evaluate(() => { Storage.prototype.removeItem = window.originalRemoveItem; });
+      await Promise.all([
+        receivingPage.waitForEvent('load'),
+        receivingPage.getByRole('button', {name: 'Erase local state'}).click()
+      ]);
+      assert.equal(await receivingPage.evaluate(key => localStorage.getItem(key), storageKey), null);
+      assert.equal(await receivingPage.evaluate(() => localStorage.getItem('unrelated')), 'keep');
       assert.deepEqual(remoteRequests, []);
       assert.deepEqual(pageErrors, []);
       await receiver.close();

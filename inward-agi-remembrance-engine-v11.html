@@ -178,6 +178,7 @@
             <button type="button" onclick="exportState()" class="rounded-xl border border-cyan-400/50 px-4 py-2 text-cyan-200">Download unencrypted JSON</button>
             <button type="button" onclick="eraseState()" class="rounded-xl border border-rose-400/50 px-4 py-2 text-rose-200">Erase local state</button>
           </div>
+          <p id="erase-status" class="mt-2 text-slate-300" role="status" aria-live="polite"></p>
           <div class="mt-4 border-t border-white/10 pt-4">
             <div class="tiny text-cyan-300 mb-2">Optional browser vault</div>
             <div id="vault-setup">
@@ -313,6 +314,7 @@
         <button type="button" onclick="unlockVault()" class="mt-3 rounded-xl bg-cyan-300 px-4 py-2 font-semibold text-black">Unlock browser vault</button>
         <p id="vault-unlock-status" class="mt-3 text-slate-300" role="status" aria-live="polite"></p>
         <button type="button" onclick="eraseState()" class="mt-4 text-rose-200 underline">Erase this browser's vault</button>
+        <p id="vault-erase-status" class="mt-2 text-slate-300" role="status" aria-live="polite"></p>
       </div>
     </div>
   </div>
@@ -1087,13 +1089,42 @@
       return true;
     }
 
-    function eraseState() {
-      if (!window.confirm('Erase the Remembrance Engine memory and field snapshot from this browser?')) return;
-      vaultSession = null;
-      vaultLocked = true;
-      storageConflict = true;
-      try { localStorage.removeItem(STORAGE_KEY); } catch (_) { /* Storage may be disabled. */ }
-      window.location.reload();
+    async function eraseState() {
+      if (vaultTransition) return false;
+      if (!window.confirm('Erase this browser\'s saved Remembrance Engine state? This cannot remove downloads, other tabs, or device backups.')) return false;
+      const session = vaultSession;
+      const locked = vaultLocked;
+      const revision = stateRevision;
+      const priorRaw = lastStoredRaw;
+      vaultTransition = true;
+      try {
+        if (session) await vaultWriteQueue;
+        if (revision !== stateRevision || session !== vaultSession || locked !== vaultLocked) {
+          throw new Error('The session changed. Review the latest state before erasing.');
+        }
+        const expectedRaw = session ? session.lastRaw : priorRaw;
+        if (localStorage.getItem(STORAGE_KEY) !== expectedRaw) {
+          throw new Error('Saved state changed in another tab. Reload and review before erasing.');
+        }
+        if (expectedRaw === null) throw new Error('There is no saved state in this browser to erase.');
+        localStorage.removeItem(STORAGE_KEY);
+        if (localStorage.getItem(STORAGE_KEY) !== null) {
+          throw new Error('The browser did not confirm deletion. Check its storage settings and try again.');
+        }
+        lastStoredRaw = null;
+        vaultSession = null;
+        vaultLocked = true;
+        storageConflict = true;
+        window.location.reload();
+        return true;
+      } catch (error) {
+        const message = `Erase not confirmed: ${error.message || 'Browser storage is unavailable.'}`;
+        document.getElementById('erase-status').textContent = message;
+        document.getElementById('vault-erase-status').textContent = message;
+        return false;
+      } finally {
+        vaultTransition = false;
+      }
     }
 
     function addTrace(center, amplitude, spread, drift = 0, type = 'memory') {
