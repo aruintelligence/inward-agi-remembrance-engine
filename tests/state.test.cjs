@@ -1016,18 +1016,34 @@ test('inspection selects a supported memory without mutating the field or saving
   assert.equal(audit.matches.length, 2); // repeated query words cannot inflate a score
 });
 
-test('equal evidence for different memories abstains; a specific query resolves it', () => {
+test('single-word collisions abstain; equal two-word evidence also abstains', () => {
   const app = boot();
-  app.read('userHistory = ["Portland rain", "Portland sunshine"].map(text => ({text, tokens: tokenize(text), ts: 1}))');
-  const ambiguous = app.read('inspectRetrieval("What about Portland?")');
+  app.read('userHistory = ["Portland rain in October", "Portland rain in June"].map(text => ({text, tokens: tokenize(text), ts: 1}))');
+  const sparse = app.read('inspectRetrieval("What about Portland?")');
+  assert.equal(sparse.status, 'insufficient-evidence');
+  assert.equal(sparse.partialCount, 2);
+  assert.equal(sparse.supportedCount, 0);
+  assert.equal(sparse.selected, null);
+  const ambiguous = app.read('inspectRetrieval("Portland rain")');
   assert.equal(ambiguous.status, 'ambiguous');
   assert.equal(ambiguous.ambiguityCount, 2);
   assert.equal(app.read('rememberRelevant("Portland")'), null);
-  assert.equal(app.read('inspectRetrieval("Portland rain").selected.index'), 0);
+  assert.equal(app.read('inspectRetrieval("Portland rain October").selected.index'), 0);
   app.context.document.getElementById('retrieval-query').value = 'Portland';
   app.read('inspectQuery()');
+  assert.match(app.elements.get('retrieval-audit').textContent, /two distinct shared words in the same entry/);
+  assert.doesNotMatch(app.elements.get('retrieval-audit').textContent, /October|June/);
+});
+
+test('one shared word in a private entry is not cited during a different question', () => {
+  const app = boot();
+  app.send('My sister lives in Corvallis');
+  assert.equal(app.read('inspectRetrieval("Which ATM client is in Corvallis?").status'), 'insufficient-evidence');
+  app.send('Which ATM client is in Corvallis?');
+  const messages = app.elements.get('chat').children.map(row => row.children[0].textContent);
+  assert.doesNotMatch(messages.at(-1), /sister lives/);
   assert.match(app.elements.get('retrieval-audit').textContent, /Recall withheld/);
-  assert.doesNotMatch(app.elements.get('retrieval-audit').textContent, /sunshine/);
+  assert.equal(app.read('inspectRetrieval("What did I say about my sister in Corvallis?").selected.index'), 0);
 });
 
 test('independent Python verifier agrees with browser decisions and rejects damaged export', () => {
@@ -1039,7 +1055,7 @@ test('independent Python verifier agrees with browser decisions and rejects dama
   try {
     fs.writeFileSync(snapshotPath, JSON.stringify(app.read('stateSnapshot()')));
     const scenarios = [
-      ['Portland', 'ambiguous', null],
+      ['Portland', 'insufficient-evidence', null],
       ['Portland rain', 'supported', 3],
       ['Portland Portland rain', 'supported', 3],
       ['Café México', 'supported', 2],
@@ -1056,6 +1072,7 @@ test('independent Python verifier agrees with browser decisions and rejects dama
       assert.equal(independent.status, browser.status, query);
       assert.equal(independent.selected_index, browser.selected?.index ?? null, query);
       assert.equal(independent.supported_count, browser.supportedCount, query);
+      assert.equal(independent.partial_count, browser.partialCount, query);
       assert.equal(independent.ambiguity_count, browser.ambiguityCount, query);
       assert.deepEqual(independent.matches, Array.from(browser.matches), query);
       const [numerator, denominator = '1'] = (independent.score || '0').split('/');
@@ -1068,6 +1085,18 @@ test('independent Python verifier agrees with browser decisions and rejects dama
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('browser recall passes labeled sparse-overlap and explicit-match challenges', () => {
+  const cases = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'recall-challenges.json'), 'utf8'));
+  const app = boot();
+  for (const challenge of cases) {
+    app.read(`userHistory = ${JSON.stringify(challenge.history)}.map(text => ({text, ts: 1}))`);
+    const result = app.read(`inspectRetrieval(${JSON.stringify(challenge.query)})`);
+    assert.equal(result.status, challenge.expected_status, challenge.id);
+    assert.equal(result.selected?.index ?? null, challenge.expected_index, challenge.id);
+  }
+  assert.equal(cases.length, 14);
 });
 
 test('finite synthetic model: unsupported additions and repeated query words cannot create a citation', () => {
@@ -1083,7 +1112,7 @@ test('finite synthetic model: unsupported additions and repeated query words can
       assert.equal(repeated.status, original.status);
       assert.equal(repeated.selected?.index ?? null, original.selected?.index ?? null);
       if (original.selected) {
-        assert.ok(original.matches.length > 0);
+        assert.ok(original.matches.length >= 2);
         assert.ok(original.matches.some(word => original.selected.text.includes(word)));
       }
       if (query !== 'nebula') {

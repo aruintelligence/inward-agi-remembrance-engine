@@ -38,6 +38,7 @@ def inspect(history, query):
     result = {
         "status": "no-evidence",
         "candidate_count": len(history),
+        "partial_count": 0,
         "supported_count": 0,
         "selected_index": None,
         "matches": [],
@@ -54,11 +55,15 @@ def inspect(history, query):
     for index, entry in enumerate(history):
         candidate_terms = set(tokenize(entry["text"]))
         matches = [term for term in terms if term in candidate_terms]
-        if matches:
+        if len(matches) == 1:
+            result["partial_count"] += 1
+        elif len(matches) >= 2:
             score = 4 * len(matches) + Fraction(len(matches), len(candidate_terms))
             ranked.append((score, index, entry["text"], matches))
     result["supported_count"] = len(ranked)
     if not ranked:
+        if result["partial_count"]:
+            result["status"] = "insufficient-evidence"
         return result
 
     ranked.sort(key=lambda candidate: (candidate[0], candidate[1]), reverse=True)

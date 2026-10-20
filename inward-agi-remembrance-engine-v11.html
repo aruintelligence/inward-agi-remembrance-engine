@@ -148,7 +148,7 @@
 
         <div class="glass rounded-[1.25rem] p-4 text-sm">
           <label for="retrieval-query" class="tiny text-cyan-300 block mb-2">Recall evidence lab</label>
-          <p class="text-slate-400 mb-3">Try a question against saved entries. This inspection does not add a memory or change the field. Matches are word overlap, not proof that a statement is true.</p>
+          <p class="text-slate-400 mb-3">Try a question against saved entries. This inspection does not add a memory or change the field. A quote requires two distinct shared substantive words in one earlier entry. Word overlap does not prove that a statement is true.</p>
           <div class="flex flex-col sm:flex-row gap-2">
             <input id="retrieval-query" type="text" maxlength="2000" placeholder="What did I say about Portland?" class="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/20 px-4 py-2 text-slate-100 placeholder:text-slate-500" aria-label="Question to inspect">
             <button type="button" onclick="inspectQuery()" class="rounded-xl border border-cyan-400/50 px-4 py-2 text-cyan-200">Inspect recall</button>
@@ -1453,17 +1453,25 @@
 
     function inspectRetrieval(query) {
       const terms = [...new Set(tokenize(query))];
-      const result = { status: 'no-evidence', candidateCount: userHistory.length, supportedCount: 0, selected: null, matches: [], score: null, ambiguityCount: 0 };
+      const result = { status: 'no-evidence', candidateCount: userHistory.length, partialCount: 0,
+        supportedCount: 0, selected: null, matches: [], score: null, ambiguityCount: 0 };
       if (!userHistory.length) { result.status = 'no-memory'; return result; }
       if (!terms.length) return result;
 
-      const candidates = userHistory.map((entry, index) => {
+      const matchesByEntry = userHistory.map((entry, index) => {
         const candidateTerms = new Set(tokenize(entry.text));
         const matches = terms.filter(term => candidateTerms.has(term));
         return { entry, index, matches, score: matches.length ? 4 * matches.length + matches.length / candidateTerms.size : 0 };
       }).filter(candidate => candidate.matches.length);
+      result.partialCount = matchesByEntry.filter(candidate => candidate.matches.length === 1).length;
+      // A single shared word can be incidental. Repeated query words and
+      // separate one-word matches in different entries cannot satisfy this gate.
+      const candidates = matchesByEntry.filter(candidate => candidate.matches.length >= 2);
       result.supportedCount = candidates.length;
-      if (!candidates.length) return result;
+      if (!candidates.length) {
+        if (result.partialCount) result.status = 'insufficient-evidence';
+        return result;
+      }
 
       candidates.sort((a, b) => b.score - a.score || b.index - a.index);
       const top = candidates[0];
@@ -1489,6 +1497,7 @@
       const panel = document.getElementById('retrieval-audit');
       if (audit.status === 'no-memory') panel.textContent = 'No earlier entries to inspect.';
       else if (audit.status === 'no-evidence') panel.textContent = `No recall: no shared substantive words across ${audit.candidateCount} earlier entries.`;
+      else if (audit.status === 'insufficient-evidence') panel.textContent = `Recall withheld: ${audit.partialCount} earlier entr${audit.partialCount === 1 ? 'y shares' : 'ies share'} only one substantive word each. A quote requires two distinct shared words in the same entry.`;
       else if (audit.status === 'ambiguous') panel.textContent = `Recall withheld: ${audit.ambiguityCount} different entries have equal top lexical support. Matched words: ${audit.matches.join(', ')}. Refine the question.`;
       else panel.textContent = `Lexical match ${audit.selected.index + 1}/${audit.candidateCount}: “${audit.selected.text}” Matched words: ${audit.matches.join(', ')}. ${audit.supportedCount} supported candidate(s).${vetoed ? ' Response vetoed; nothing cited.' : ''}`;
     }

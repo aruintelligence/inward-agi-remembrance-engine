@@ -44,6 +44,13 @@ test('real browser: offline runtime, protected saves, lock, unlock, download, an
       await page.getByRole('button', {name: 'SEND TO REMEMBRANCE'}).click();
       const plain = await page.evaluate(key => localStorage.getItem(key), storageKey);
       assert.match(plain, /Corvallis sunrise belongs to this vault/);
+      await page.locator('#retrieval-query').fill('Which ATM client is in Corvallis?');
+      await page.getByRole('button', {name: 'Inspect recall'}).click();
+      assert.match(await page.locator('#retrieval-audit').textContent(), /Recall withheld/);
+      assert.doesNotMatch(await page.locator('#retrieval-audit').textContent(), /Corvallis sunrise belongs/);
+      await page.locator('#retrieval-query').fill('Corvallis sunrise');
+      await page.getByRole('button', {name: 'Inspect recall'}).click();
+      assert.match(await page.locator('#retrieval-audit').textContent(), /Corvallis sunrise belongs/);
 
       await page.locator('#vault-passphrase').fill(vaultPassword);
       await page.locator('#vault-confirm').fill(vaultPassword);

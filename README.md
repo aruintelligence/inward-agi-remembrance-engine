@@ -21,7 +21,7 @@ It explores a memory-first design question:
 
 - Browser-local remembrance events that survive reload when storage is available, with an optional encrypted vault and passphrase rotation
 - A deduplicated memory ledger
-- An evidence-aware lexical recall rule that abstains on unrelated or equally supported memories
+- An evidence-aware lexical recall rule that requires two distinct shared substantive words in one earlier entry and abstains on sparse or equally supported memories
 - A local Recall evidence lab that shows matching words without saving inspection queries
 - A reviewed control for removing an individual saved memory
 - A visible 40-memory capacity guard that preserves a new draft instead of silently discarding the oldest memory
@@ -83,7 +83,7 @@ Run the local regression suite with Node.js 22 and Python 3 available:
 node tests/state.test.cjs
 ```
 
-It covers reload and retrieval, unsupported and ambiguous recall, independent Python verification, the initial empty-state label, response gating, malformed and blocked storage, both export formats, vault migration, locking and passphrase rotation, independent decryption, wrong passphrases, tampering, encrypted restore and merge, reviewed individual removal, full-capacity input refusal, deduplication, stale review, failed write, and confirmed or refused erasure. [The retrieval protocol](RETRIEVAL_PROTOCOL.md) states the exact rule and shows how to recheck an unencrypted exported state without importing browser code.
+It covers reload and retrieval, sparse and ambiguous recall, independent Python verification, the initial empty-state label, response gating, malformed and blocked storage, both export formats, vault migration, locking and passphrase rotation, independent decryption, wrong passphrases, tampering, encrypted restore and merge, reviewed individual removal, full-capacity input refusal, deduplication, stale review, failed write, and confirmed or refused erasure. [The retrieval protocol](RETRIEVAL_PROTOCOL.md) states the exact rule and shows how to recheck an unencrypted exported state without importing browser code. Run `python3 tools/challenge_retrieval.py` to check the labeled sparse-overlap and positive examples; the challenge set does not measure performance on real user questions.
 
 To rebuild the committed stylesheet after editing classes, install the pinned build dependency and check the result:
 
@@ -125,7 +125,7 @@ The prototype draws on the Inward Physics™ research program:
 
 - Browser behavior and storage limits vary
 - The dynamics are defined by the implementation rather than independently validated
-- Retrieval uses exact normalized word overlap. It can miss paraphrases and should not be interpreted as evidence that a recalled statement is true
+- Retrieval uses exact normalized word overlap and requires two distinct shared substantive words in one entry. It withholds single-word questions and can miss paraphrases. Even two shared words can be coincidental; a quote is not evidence that the statement is true
 - The interface should not be used for consequential medical, psychological, legal, financial, or spiritual decisions
 - The repository does not establish comparative “first” claims about the broader AI field
 
