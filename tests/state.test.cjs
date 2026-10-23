@@ -49,7 +49,7 @@ function boot(saved = new Map(), storageBlocked = false, storageWriteBlocked = f
     createElement(tag) { return new Element(tag); }
   };
   const localStorage = {
-    getItem(k) { if (storageBlocked) throw new Error('blocked'); return saved.get(k) || null; },
+    getItem(k) { if (storageBlocked) throw new Error('blocked'); return saved.has(k) ? saved.get(k) : null; },
     setItem(k, v) { if (storageBlocked || storageWriteBlocked) throw new Error('blocked'); saved.set(k, v); },
     removeItem(k) {
       if (storageBlocked || storageDeleteBlocked) throw new Error('blocked');
@@ -438,6 +438,48 @@ test('damaged saved state pauses new input while a fresh blocked-storage session
   blocked.send('Ephemeral text');
   assert.equal(blocked.read('userHistory.length'), 1);
   assert.match(blocked.elements.get('storage-status').textContent, /unavailable/);
+});
+
+test('unreadable saved values get a reversible recovery record, never an empty normal backup', async () => {
+  for (const raw of ['{broken private text \ud800', '']) {
+    const saved = new Map([[key, raw]]);
+    const app = boot(saved);
+    assert.equal(app.read('unreadableSavedState'), true);
+    assert.equal(app.elements.get('download-recovery-record').hidden, false);
+    assert.equal(app.elements.get('show-backup-options').hidden, true);
+    app.send('Keep this draft while inspecting the saved value');
+    assert.equal(app.elements.get('input').value, 'Keep this draft while inspecting the saved value');
+    assert.equal(saved.get(key), raw);
+    assert.equal(app.read('exportState()'), false);
+    assert.equal(app.exports.length, 0);
+    assert.match(app.elements.get('backup-status').textContent, /No normal backup started/);
+    app.context.document.getElementById('export-passphrase').value = 'unique recovery test passphrase';
+    app.context.document.getElementById('export-confirm').value = 'unique recovery test passphrase';
+    assert.equal(await app.read('exportEncryptedState()'), false);
+    assert.equal(app.exports.length, 0);
+    assert.match(app.elements.get('crypto-status').textContent, /No encrypted backup started/);
+    assert.equal(app.read('downloadUnreadableSavedValue()'), true);
+    const record = JSON.parse(await app.exports[0].text());
+    assert.equal(record.format, 'aru-remembrance-raw-recovery-v1');
+    assert.equal(record.storage_key, key);
+    assert.equal(record.raw_value, raw);
+    assert.equal(saved.get(key), raw);
+    assert.throws(() => app.read(`validateImportedState(${JSON.stringify(JSON.stringify(record))})`));
+    saved.set(key, '{different value');
+    assert.equal(app.read('downloadUnreadableSavedValue()'), false);
+    assert.equal(app.exports.length, 1);
+    assert.match(app.elements.get('recovery-record-status').textContent, /Saved value changed/);
+    assert.equal(saved.get(key), '{different value');
+  }
+
+  const changedDuringLoad = boot();
+  let reads = 0;
+  changedDuringLoad.context.localStorage.getItem = () => ++reads === 1 ? '{broken' : '{newer value';
+  changedDuringLoad.read('loadState()');
+  assert.equal(changedDuringLoad.read('unreadableSavedState'), true);
+  assert.equal(changedDuringLoad.read('exportState()'), false);
+  assert.equal(changedDuringLoad.read('downloadUnreadableSavedValue()'), false);
+  assert.equal(changedDuringLoad.exports.length, 0);
 });
 
 test('export includes text and erasure removes only the app state', async () => {

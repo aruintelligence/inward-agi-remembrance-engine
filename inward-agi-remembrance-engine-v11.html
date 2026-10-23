@@ -305,9 +305,11 @@
           <p id="capacity-status" class="text-sm text-slate-300 mt-3" role="status" aria-live="polite"></p>
           <p id="send-status" class="text-sm text-amber-300 mt-2" role="status" aria-live="polite"></p>
           <div id="recovery-panel" hidden class="mt-3 rounded-xl border border-amber-300/50 bg-black/20 p-3 text-sm text-amber-100" role="alert">
-            <p>Saving is paused. This page may contain unsaved changes. Download the current session before reloading. A waiting draft stays in the input and must be copied separately.</p>
+            <p id="recovery-guidance">Saving is paused. This page may contain unsaved changes. Download the current session before reloading. A waiting draft stays in the input and must be copied separately.</p>
             <p id="vault-recovery-steps" hidden class="mt-2">Vault recovery: download an encrypted copy and use Verify downloaded copy below. Confirm its exact bytes and memories match this page before leaving. Reload, unlock the latest vault, review that copy, then select current and incoming memories to merge. Keep the copy until you verify the result.</p>
-            <button type="button" onclick="openBackupControls()" class="mt-2 text-cyan-200 underline">Show backup options</button>
+            <button id="show-backup-options" type="button" onclick="openBackupControls()" class="mt-2 text-cyan-200 underline">Show backup options</button>
+            <button id="download-recovery-record" type="button" hidden onclick="downloadUnreadableSavedValue()" class="mt-2 text-cyan-200 underline">Download saved-value recovery record</button>
+            <p id="recovery-record-status" class="mt-2" role="status" aria-live="polite"></p>
           </div>
           <button type="button" onclick="openMemoryControl()" class="mt-2 text-sm text-cyan-200 underline">Manage memories</button>
           <div class="flex flex-col sm:flex-row gap-3 mt-6">
@@ -398,6 +400,7 @@
     let pendingForget = null;
     let lastStoredRaw = null;
     let storageConflict = false;
+    let unreadableSavedState = false;
     let vaultLocked = false;
     let vaultSession = null; // Non-extractable CryptoKey, salt, and last committed encrypted value.
     let vaultTransition = false;
@@ -430,7 +433,9 @@
 
     function pauseUnsavedInput() {
       document.getElementById('send-status').textContent =
-        'Input paused: browser state cannot be saved. Your draft is still here. Download the current session before reloading.';
+        unreadableSavedState
+          ? 'Input paused: the saved value could not be opened. Your draft is still here. Download its recovery record before repairing or erasing it.'
+          : 'Input paused: browser state cannot be saved. Your draft is still here. Download the current session before reloading.';
       showStorageStatus();
       return false;
     }
@@ -438,8 +443,15 @@
     function showStorageStatus() {
       document.getElementById('recovery-panel').hidden = vaultLocked || !needsSavedStateRecovery();
       document.getElementById('vault-recovery-steps').hidden = !(vaultSession && unsavedChanges && needsSavedStateRecovery());
+      document.getElementById('show-backup-options').hidden = unreadableSavedState;
+      document.getElementById('download-recovery-record').hidden = !unreadableSavedState;
+      document.getElementById('recovery-guidance').textContent = unreadableSavedState
+        ? 'The saved value could not be opened. Preserve a recovery record of the original stored string before repairing or erasing it. The record may contain private text and cannot be restored as-is. Copy an unsent draft separately.'
+        : 'Saving is paused. This page may contain unsaved changes. Download the current session before reloading. A waiting draft stays in the input and must be copied separately.';
       document.getElementById('storage-status').textContent = vaultLocked
         ? 'Browser vault locked. No saved memory is loaded until you unlock it.'
+        : unreadableSavedState
+          ? 'Saved state is unreadable. Input is paused; the empty page is not a backup of that saved value. Download its recovery record before repairing or erasing it.'
         : storageConflict && vaultSession && unsavedChanges
           ? 'Vault save conflicted or failed. This unlocked page holds unsaved changes; new input is paused. Download an encrypted portable copy before reloading to unlock the latest saved vault.'
         : storageConflict
@@ -606,7 +618,7 @@
       try {
         const raw = localStorage.getItem(STORAGE_KEY);
         lastStoredRaw = raw;
-        if (!raw) { showStorageStatus(); return; }
+        if (raw === null) { showStorageStatus(); return; }
         const state = JSON.parse(raw);
         if (state && typeof state === 'object' && Object.prototype.hasOwnProperty.call(state, 'format')) {
           enterLockedState();
@@ -616,8 +628,18 @@
       } catch (_) {
         // Preserve damaged or unfamiliar saved values for recovery instead of
         // silently replacing them with a new plaintext snapshot.
-        try { storageConflict = localStorage.getItem(STORAGE_KEY) !== null; }
-        catch (_) { storageAvailable = false; }
+        try {
+          const current = localStorage.getItem(STORAGE_KEY);
+          storageConflict = current !== null || lastStoredRaw !== null;
+          unreadableSavedState = storageConflict && !vaultLocked;
+        }
+        catch (_) {
+          storageAvailable = false;
+          if (lastStoredRaw !== null && !vaultLocked) {
+            storageConflict = true;
+            unreadableSavedState = true;
+          }
+        }
       }
       showStorageStatus();
     }
@@ -643,10 +665,36 @@
       catch (_) { throw new Error('File is not valid UTF-8.'); }
     }
 
+    function downloadUnreadableSavedValue() {
+      const status = document.getElementById('recovery-record-status');
+      if (!unreadableSavedState || vaultLocked) return false;
+      if (lastStoredRaw === null) {
+        status.textContent = 'Recovery record not downloaded: the saved value was not captured. Reload to inspect it again.';
+        return false;
+      }
+      try {
+        if (localStorage.getItem(STORAGE_KEY) !== lastStoredRaw) {
+          throw new Error('Saved value changed. Reload to inspect the latest value before downloading a record.');
+        }
+        const record = {format: 'aru-remembrance-raw-recovery-v1',
+          captured_at: new Date().toISOString(), storage_key: STORAGE_KEY, raw_value: lastStoredRaw};
+        downloadJsonText(JSON.stringify(record, null, 2), 'inward-remembrance-recovery-record.json');
+        status.textContent = 'Recovery record download started. Check your downloads. This record is unverified and cannot be imported as a state file.';
+        return true;
+      } catch (error) {
+        status.textContent = `Recovery record not downloaded: ${error.message || 'browser storage is unavailable.'}`;
+        return false;
+      }
+    }
+
     function exportState() {
       if (vaultLocked || vaultTransition) return false;
       const state = stateSnapshot();
       const status = document.getElementById('backup-status');
+      if (unreadableSavedState) {
+        status.textContent = 'No normal backup started: the saved value is unreadable. Use the recovery record in the warning above.';
+        return false;
+      }
       if (portableBytes(state) > MAX_IMPORT_BYTES) {
         status.textContent = 'Download refused: this snapshot exceeds 256 KiB and could not be restored. Remove a saved memory, then retry.';
         return false;
@@ -950,6 +998,7 @@
       const revision = stateRevision;
       const session = vaultSession;
       try {
+        if (unreadableSavedState) throw new Error('No encrypted backup started: the saved value is unreadable. Download its recovery record first.');
         if (passphrase !== confirmation.value) throw new Error('Passphrases do not match.');
         const snapshot = stateSnapshot();
         const count = snapshot.user_history.length;
