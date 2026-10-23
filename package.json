@@ -1,0 +1,13 @@
+{
+  "name": "inward-agi-remembrance-engine",
+  "private": true,
+  "scripts": {
+    "build:styles": "node tools/rebuild_styles.cjs",
+    "test": "node tests/state.test.cjs",
+    "test:browser": "node tests/browser.test.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1",
+    "tailwindcss": "3.4.19"
+  }
+}

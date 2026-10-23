@@ -1,0 +1,114 @@
+[
+  {
+    "id": "city collision with unrelated client",
+    "kind": "sparse trap",
+    "history": ["My sister lives in Corvallis"],
+    "query": "Which ATM client is in Corvallis?",
+    "expected_status": "insufficient-evidence",
+    "expected_index": null
+  },
+  {
+    "id": "two facts cannot combine into one citation",
+    "kind": "sparse trap",
+    "history": ["Corvallis riverfront", "Portland ATM"],
+    "query": "Corvallis ATM",
+    "expected_status": "insufficient-evidence",
+    "expected_index": null
+  },
+  {
+    "id": "repeating one word adds no evidence",
+    "kind": "sparse trap",
+    "history": ["Orchid"],
+    "query": "orchid orchid orchid",
+    "expected_status": "insufficient-evidence",
+    "expected_index": null
+  },
+  {
+    "id": "single-word exact memory is deliberately withheld",
+    "kind": "sparse trap",
+    "history": ["Orchid"],
+    "query": "Orchid",
+    "expected_status": "insufficient-evidence",
+    "expected_index": null
+  },
+  {
+    "id": "account word is not account balance",
+    "kind": "sparse trap",
+    "history": ["My private account is blue"],
+    "query": "How much is my account balance?",
+    "expected_status": "insufficient-evidence",
+    "expected_index": null
+  },
+  {
+    "id": "city does not identify fire alarm installer",
+    "kind": "sparse trap",
+    "history": ["The Portland storefront has a camera"],
+    "query": "Who installed the Portland fire alarm?",
+    "expected_status": "insufficient-evidence",
+    "expected_index": null
+  },
+  {
+    "id": "sensitive entry shares only a generic word",
+    "kind": "sparse trap",
+    "history": ["The vault stores this passport number in a private drawer"],
+    "query": "Where is the vault buried treasure?",
+    "expected_status": "insufficient-evidence",
+    "expected_index": null
+  },
+  {
+    "id": "specific family memory",
+    "kind": "explicit match",
+    "history": ["My sister lives in Corvallis"],
+    "query": "What did I say about my sister in Corvallis?",
+    "expected_status": "supported",
+    "expected_index": 0
+  },
+  {
+    "id": "specific account memory",
+    "kind": "explicit match",
+    "history": ["My private account is blue"],
+    "query": "What did I say about the blue account?",
+    "expected_status": "supported",
+    "expected_index": 0
+  },
+  {
+    "id": "diacritics and case normalize",
+    "kind": "explicit match",
+    "history": ["Café México"],
+    "query": "CAFÉ MÉXICO",
+    "expected_status": "supported",
+    "expected_index": 0
+  },
+  {
+    "id": "specific month resolves equal city weather",
+    "kind": "explicit match",
+    "history": ["Portland rain in October", "Portland rain in June"],
+    "query": "Portland rain October",
+    "expected_status": "supported",
+    "expected_index": 0
+  },
+  {
+    "id": "identical entries select latest index",
+    "kind": "explicit match",
+    "history": ["Portland rain", "Portland rain"],
+    "query": "Portland rain",
+    "expected_status": "supported",
+    "expected_index": 1
+  },
+  {
+    "id": "two-word tie between different entries",
+    "kind": "ambiguous",
+    "history": ["Portland rain in October", "Portland rain in June"],
+    "query": "Portland rain",
+    "expected_status": "ambiguous",
+    "expected_index": null
+  },
+  {
+    "id": "paraphrase is outside lexical scope",
+    "kind": "no overlap",
+    "history": ["My bicycle is crimson"],
+    "query": "red bike",
+    "expected_status": "no-evidence",
+    "expected_index": null
+  }
+]
